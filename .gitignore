@@ -1,0 +1,29 @@
+# Compiled Object Files
+*.o
+
+# Executables and Libraries
+*.so
+*.a
+newlisp
+
+# Build and Configuration Artifacts
+obj/
+newlisp-amal.c
+makefile_build
+makefile_install
+config.h
+junk
+*.tmp
+*.log
+qa_out.txt
+qa-dot-test
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Operating System & Editor Files
+*.swp
+*~
+.vscode/
+.idea/

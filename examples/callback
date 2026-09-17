@@ -1,0 +1,40 @@
+#!/usr/bin/newlisp
+
+; locate the newLISP shared library: built in the repository root
+; (make -f makefiles/linuxLP64_lib.mk), in the current directory,
+; or system-wide (sudo make install_lib)
+(set 'LIBRARY
+  (or (and (file-info "../newlisp.so") "../newlisp.so")
+      (and (file-info "./newlisp.so") "./newlisp.so")
+      (and (file-info "/usr/local/lib/newlisp.so") "/usr/local/lib/newlisp.so")
+      (begin
+        (println "newlisp shared library not found.")
+        (println "build it first in the repository root:")
+        (println "  make clean && make -f makefiles/linuxLP64_lib.mk")
+        (exit 1))))
+
+; import functions from the newLISP shared library
+(import LIBRARY "newlispEvalStr")
+(import LIBRARY "newlispCallback")
+
+; set calltype platform specific
+(set 'CALLTYPE "cdecl")
+
+; the callback function
+(define (callme p1 p2 p3 result)
+    (println "p1 => " p1 " p2 => " p2 " p3 => " p3)
+    result)
+
+; register the callback with newLISP library
+(newlispCallback "callme" (callback 0 'callme) CALLTYPE)
+
+; the callback returns a string
+(println (get-string (newlispEvalStr
+    {(get-string (callme 123 456 789 "hello world"))})))
+
+; the callback returns a number
+(println (get-string (newlispEvalStr
+    {(callme 123 456 789 99999)})))
+
+
+(exit)
