@@ -72,6 +72,9 @@
 ;; @syntax (XMLRPC:error)
 ;; @return Error text of last error occured.
 
+;; HTTP requests (post-url) are provided by the libcurl FFI module
+(module "curl.lsp")
+
 (context 'XMLRPC)
 
 (set 'request

@@ -3,6 +3,9 @@
 ; demo use spawn and sync for
 ; aysnchronous HTTP get-url requests
 
+; get-url is provided by the libcurl FFI module
+(module "curl.lsp")
+
 (set 'start (time-of-day))
 
 ; callback routine when page is finished

@@ -1,6 +1,6 @@
 # newLISP Standard Library Modules
 
-20 modules ship in `modules/` (repo) and install to
+21 modules ship in `modules/` (repo) and install to
 `/usr/local/share/newlisp/modules/`.
 
 Load with:
@@ -53,6 +53,14 @@ Generic ODBC: `ODBC:connect`, `ODBC:query`, `ODBC:fetch-row`,
 `ODBC:tables`, `ODBC:columns`, `ODBC:close-db`.
 
 ## Internet / protocols
+
+### `curl.lsp` — context `Curl` (defines `MAIN:get-url` & friends)
+HTTP client on libcurl via FFI (Linux only, needs a `-DFFI` build).
+Loading it defines `get-url`, `put-url`, `post-url`, `delete-url` in MAIN
+(legacy drop-in replacement for the old C primitives, which were removed;
+URL support in `read-file`/`write-file`/`delete-file`/`load`/`save`
+delegates to these functions and requires this module to be loaded).
+Classic syntax: `(get-url url ["header|list|debug|raw"] [timeout-ms [header]])`.
 
 ### `cgi.lsp` — context `CGI`
 CGI helpers for GET/POST: `CGI:put-page`, `CGI:url-translate`,

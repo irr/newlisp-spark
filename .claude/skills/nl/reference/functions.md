@@ -1,6 +1,6 @@
 # newLISP Spark — Built-in Function Reference
 
-Condensed from `doc/newlisp_manual.html` (newLISP Spark v10.7.6s1).
+Condensed from `doc/newlisp_manual.html` (newLISP Spark v10.8).
 Full details, examples and edge cases: `doc/newlisp_manual.html` (repo)
 or `/usr/local/share/doc/newlisp/newlisp_manual.html` (installed).
 
@@ -2290,11 +2290,16 @@ The BASE64 string in str is decoded. Note that str is not verified to be a valid
 ```
 This function deletes the file on a remote HTTP server specified in str-url. The HTTP DELETE protocol must be enabled on the target web server, or an error message string may be returned.
 
+NOTE: not a primitive — since the libcurl+FFI rework these four `*-url`
+functions are defined by `(module "curl.lsp")` (libcurl FFI, Linux only).
+URL support in `load`, `save`, `read-file`, `write-file`, `append-file`,
+`delete-file` also requires that module to be loaded.
+
 ### `get-url`
 ```lisp
 (get-url str-url [str-option] [int-timeout [str-header]])
 ```
-Reads a web page or file specified by the URL in str-url using the HTTP GET protocol.
+Reads a web page or file specified by the URL in str-url using the HTTP GET protocol. Provided by `(module "curl.lsp")` — see note at `delete-url`.
 
 ### `json-error`
 ```lisp
@@ -2312,13 +2317,13 @@ This function parses JSON formatted text and translates it to newLISP S-expressi
 ```lisp
 (post-url str-url str-content [str-content-type [str-option] [int-timeout [ str-header]]])
 ```
-Sends an HTTP POST request to the URL in str-url. POST requests are used to post information collected from web entry forms to a web site.
+Sends an HTTP POST request to the URL in str-url. POST requests are used to post information collected from web entry forms to a web site. Provided by `(module "curl.lsp")` — see note at `delete-url`.
 
 ### `put-url`
 ```lisp
 (put-url str-url str-content [str-option] [int-timeout [str-header]])
 ```
-The HTTP PUT protocol is used to transfer information in str-content to a file specified in str-url.
+The HTTP PUT protocol is used to transfer information in str-content to a file specified in str-url. Provided by `(module "curl.lsp")` — see note at `delete-url`.
 
 ### `xfer-event`
 ```lisp

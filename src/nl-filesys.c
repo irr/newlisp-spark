@@ -274,8 +274,9 @@ CELL * result;
 params = getString(params, &fileName);
 if(my_strnicmp(fileName, "http://", 7) == 0)
     {
-    result = getPutPostDeleteUrl(fileName, params, HTTP_GET, CONNECT_TIMEOUT);
-    return((my_strnicmp((char *)result->contents, (char *)"ERR:", 4) == 0) && netErrorIdx ? nilCell : result);
+    /* URL reading via modules/curl.lsp (libcurl FFI) */
+    result = curlModuleRequest("get-url", fileName, params);
+    return((result == NULL || isCurlErrorResult(result)) ? nilCell : result);
     }
 if((size = readFile(fileName, &buffer)) == -1)
     return(nilCell);
@@ -382,14 +383,29 @@ char * fileName;
 char * buffer;
 size_t size;
 CELL * result;
+CELL * dataCell;
 
 params = getString(params, &fileName);
 
 if(my_strnicmp(fileName, "http://", 7) == 0)
     {
-    result = getPutPostDeleteUrl(fileName, params,
-                (*type == 'w') ? HTTP_PUT : HTTP_PUT_APPEND, CONNECT_TIMEOUT);
-    return((my_strnicmp((char *)result->contents, (char *)"ERR:", 4) == 0) && netErrorIdx ? nilCell : result);
+    /* URL writing via modules/curl.lsp (libcurl FFI); evaluate the
+       data argument first, the remaining option args are passed on */
+    params = getStringSize(params, &buffer, &size, TRUE);
+    dataCell = stuffStringN(buffer, size);
+    dataCell->next = params;
+    if(*type == 'a' && params == nilCell)
+        {
+        /* legacy append-file on URLs sent a "Pragma: append" header */
+        CELL * tail;
+        dataCell->next = stuffString("");
+        tail = dataCell->next;
+        tail->next = stuffInteger(CONNECT_TIMEOUT);
+        tail = tail->next;
+        tail->next = stuffString("Pragma: append\r\n");
+        }
+    result = curlModuleRequest("put-url", fileName, dataCell);
+    return((result == NULL || isCurlErrorResult(result)) ? nilCell : result);
     }
 
 getStringSize(params, &buffer, &size, TRUE);
@@ -706,8 +722,9 @@ CELL * result;
 params = getString(params, &fileName);
 if(my_strnicmp(fileName, "http://", 7) == 0)
     {
-    result = getPutPostDeleteUrl(fileName, params, HTTP_DELETE, CONNECT_TIMEOUT);
-    return((my_strnicmp((char *)result->contents, (char *)"ERR:", 4) == 0) && netErrorIdx ? nilCell : result);
+    /* URL deleting via modules/curl.lsp (libcurl FFI) */
+    result = curlModuleRequest("delete-url", fileName, params);
+    return((result == NULL || isCurlErrorResult(result)) ? nilCell : result);
     }
 
 fileName = getLocalPath(fileName);

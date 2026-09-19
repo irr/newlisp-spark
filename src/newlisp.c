@@ -48,26 +48,26 @@ int opsys = 1;
 
 int bigEndian = 1; /* gets set in main() */
 
-int version = 10706;
+int version = 10800;
 
 char copyright[]=
-"\nnewLISP Spark v.10.7.6s1 Copyright (C) 2020 Lutz Mueller; Copyright (C) 2026 KIM Taegyoon; Copyright (C) 2026 Ivan Rocha. All rights reserved.\n\n%s\n\n";
+"\nnewLISP Spark v.10.8 Copyright (C) 2020 Lutz Mueller; Copyright (C) 2026 KIM Taegyoon; Copyright (C) 2026 Ivan Rocha. All rights reserved.\n\n%s\n\n";
 
 #ifndef NEWLISP64
 #ifdef SUPPORT_UTF8
 char banner[]=
-"newLISP Spark v.10.7.6s1 32-bit on %s IPv4/6 UTF-8%s%s\n\n";
+"newLISP Spark v.10.8 32-bit on %s IPv4/6 UTF-8%s%s\n\n";
 #else
 char banner[]=
-"newLISP Spark v.10.7.6s1 32-bit on %s IPv4/6%s%s\n\n";
+"newLISP Spark v.10.8 32-bit on %s IPv4/6%s%s\n\n";
 #endif
 #else /* NEWLISP64 */
 #ifdef SUPPORT_UTF8
 char banner[]=
-"newLISP Spark v.10.7.6s1 64-bit on %s IPv4/6 UTF-8%s%s\n\n";
+"newLISP Spark v.10.8 64-bit on %s IPv4/6 UTF-8%s%s\n\n";
 #else
 char banner[]=
-"newLISP Spark v.10.7.6s1 64-bit on %s IPv4/6%s%s\n\n";
+"newLISP Spark v.10.8 64-bit on %s IPv4/6%s%s\n\n";
 #endif 
 #endif /* NEWLISP64 */
 
@@ -3641,9 +3641,12 @@ else sourceLen = MAX_FILE_BUFFER;
 
 if(my_strnicmp(fileName, "http://", 7) == 0)
     {
-    result = getPutPostDeleteUrl(fileName, nilCell, HTTP_GET, CONNECT_TIMEOUT);
+    /* URL loading via modules/curl.lsp (libcurl FFI) */
+    result = curlModuleRequest("get-url", fileName, nilCell);
+    if(result == NULL)
+        return(errorProcExt2(ERR_ACCESSING_FILE, stuffString(fileName)));
     pushResult(result);
-    if(memcmp((char *)result->contents, "ERR:", 4) == 0)
+    if(isCurlErrorResult(result))
         return(errorProcExt2(ERR_ACCESSING_FILE, stuffString((char *)result->contents)));
     result = copyCell(sysEvalString((char *)result->contents, context, nilCell, EVAL_STRING));
     currentContext = contextSave;
@@ -6699,11 +6702,17 @@ serializeSymbols(params, (UINT)&strStream);
 /* check for URL format */
 if(my_strnicmp(fileName, "http://", 7) == 0)
     {
+    /* URL saving via modules/curl.lsp (libcurl FFI) */
     dataCell = stuffString(strStream.buffer);
-    result = getPutPostDeleteUrl(fileName, dataCell, HTTP_PUT, CONNECT_TIMEOUT);
-    pushResult(result);
+    result = curlModuleRequest("put-url", fileName, dataCell);
+    if(result != NULL)
+        {
+        pushResult(result);
+        errorFlag = isCurlErrorResult(result);
+        }
+    else
+        errorFlag = TRUE;
     deleteList(dataCell);
-    errorFlag = (strncmp((char *)result->contents, "ERR:", 4) == 0);
     }
 else
     errorFlag = writeFile(fileName, strStream.buffer, strStream.position, "w");
@@ -7334,7 +7343,24 @@ return(setEvent(params, &commandEvent, "$command-event"));
 
 CELL * p_transferEvent(CELL * params)
 {
-return(setEvent(params, &transferEvent, "$transfer-event"));
+CELL * result = setEvent(params, &transferEvent, "$transfer-event");
+
+/* make the handler visible to the libcurl FFI client (modules/curl.lsp),
+   which cannot read the transferEvent C global */
+if(params != nilCell)
+    {
+    SYMBOL * sys = translateCreateSymbol("$transfer-event-handler", CELL_NIL, mainContext, TRUE);
+    deleteList((CELL *)sys->contents);
+    if(transferEvent != nilSymbol)
+        {
+        sys->flags |= (SYMBOL_GLOBAL | SYMBOL_PROTECTED);
+        sys->contents = (UINT)copyCell((CELL *)transferEvent->contents);
+        }
+    else
+        sys->contents = (UINT)nilCell;
+    }
+
+return(result);
 }
 
 CELL * p_readerEvent(CELL * params)
