@@ -1,6 +1,6 @@
 # newLISP Command Line, REPL, and Tooling
 
-Binary: `/usr/local/bin/newlisp` (symlink to `newlisp-10.7.6`).
+Binary: `/usr/local/bin/newlisp` (symlink to `newlisp-10.8`).
 Source: `man newlisp` / `doc/newlisp-man.txt`.
 
 ## Invocation

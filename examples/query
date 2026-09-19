@@ -6,6 +6,9 @@
 ; HTML-cleaned, tokenized and words are counted using
 ; bayes-train.
 
+; get-url is provided by the libcurl FFI module
+(module "curl.lsp")
+
 ; USAGE: query <search-word>
 
 ; or rename to query.cgi and run on a web server

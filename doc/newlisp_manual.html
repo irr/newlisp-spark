@@ -672,6 +672,17 @@ specified with either their pathname or a <tt>file://</tt> URL on the local file
 system or with a <tt>http://</tt> URL on remote file systems running an HTTP
 server. That HTTP server can be newLISP running in HTTP server mode.</p>
 
+<p><b>Note (newLISP Spark 10.8):</b> HTTP access is no longer implemented in the
+interpreter kernel. All <tt>http://</tt> requests are made by
+<tt>modules/curl.lsp</tt> on top of <b>libcurl</b> via the FFI (Linux;
+libffi-enabled build required). URL support in <a href="#load">load</a>,
+<a href="#save">save</a>, <a href="#read-file">read-file</a>,
+<a href="#write-file">write-file</a>, <a href="#append-file">append-file</a>
+and <a href="#delete-file">delete-file</a> therefore requires
+<tt>(module "curl.lsp")</tt> to be loaded first (e.g. from
+<tt>init.lsp</tt> when URLs are given on the command-line). <tt>https://</tt>
+URLs are supported as well.</p>
+
 <pre>
 newlisp aprog.lsp bprog.lsp prog.lsp
 newlisp http://newlisp.org/example.lsp
@@ -8527,8 +8538,9 @@ returns the number of bytes written.</p>
 
 <p>On failure the function returns <tt>nil</tt>. For error information, 
 use <a href="#sys-error">sys-error</a> when used on files. When used
-on URLs <a href="#net-error">net-error</a> gives more error
-information.</p>
+on URLs the function returns <tt>nil</tt>; URL access is provided by
+<tt>modules/curl.lsp</tt> (see <a href="#url_files">Specifying files as
+URLs</a>).</p>
 
 <!-- example -->
 
@@ -8545,7 +8557,8 @@ in <em>str-file-name</em>. In case of the <tt>http://</tt>  prefix ,
 <tt>append-file</tt> works exactly like <a href="#put-url">put-url</a> with 
 <tt>"Pragma: append\r\n"</tt> in the header option and can take the same 
 additional parameters. The <tt>"Pragma: append\r\n"</tt> option is supplied 
-automatically.</p>
+automatically. URL access requires <tt>(module "curl.lsp")</tt>
+(see the note at <a href="#get-url">get-url</a>).</p>
 
 <!-- example -->
 
@@ -12180,10 +12193,12 @@ successfully.</p>
 
 <p>On failure the function returns <tt>nil</tt>. For error information, 
 use <a href="#sys-error">sys-error</a> when used on files. When used
-on URLs <a href="#net-error">net-error</a> gives more error
-information.</p>
+on URLs the function returns <tt>nil</tt>; URL access is provided by
+<tt>modules/curl.lsp</tt> (see <a href="#url_files">Specifying files as
+URLs</a>).</p>
 
-<p>The file name can be given as a URL.</p>
+<p>The file name can be given as a URL (URL access requires
+<tt>(module "curl.lsp")</tt> since newLISP Spark 10.8).</p>
 
 <!-- example -->
 
@@ -12207,6 +12222,10 @@ See <a href="#delete-url">delete-url</a> for details.
 <a name="delete-url"></a>
 <h2><span class="function">delete-url</span></h2>
 <h4>syntax: (delete-url <em>str-url</em>)</h4>
+
+<p><b>Note (newLISP Spark 10.8):</b> no longer a built-in C primitive — provided
+by <tt>modules/curl.lsp</tt> (libcurl via FFI); load with
+<tt>(module "curl.lsp")</tt>. See the note at <a href="#get-url">get-url</a>.</p>
 
 <p>This function deletes the file on a remote HTTP server specified in <em>str-url</em>.
 The HTTP <tt>DELETE</tt> protocol must be enabled on the target web server, 
@@ -15446,7 +15465,14 @@ or make it unstable if the wrong address is specified.
 <h2><span class="function">get-url</span></h2>
 <h4>syntax: (get-url <em>str-url</em> [<em>str-option</em>] [<em>int-timeout</em> [<em>str-header</em>]])</h4>
 
-<p>Reads a web page or file specified by the URL in <em>str-url</em> using 
+<p><b>Note (newLISP Spark 10.8):</b> This function is no longer a built-in C
+primitive — it is implemented in newLISP on top of <b>libcurl</b> via the FFI
+in <tt>modules/curl.lsp</tt>. Load it with <tt>(module "curl.lsp")</tt>
+(Linux; libffi-enabled build required). The name, arguments, options and
+<tt>ERR:</tt> message strings are unchanged, and <tt>https://</tt> URLs are
+now supported in addition to <tt>http://</tt> and <tt>file://</tt>.</p>
+
+<p>Reads a web page or file specified by the URL in <em>str-url</em> using
 the HTTP GET protocol.  Both <tt>http://</tt> and <tt>file://</tt>
 URLs are handled.  <tt>"header"</tt> can be specified in the optional argument 
 <em>str-option</em> to retrieve only the header.  The  option <tt>"list"</tt> 
@@ -17290,7 +17316,8 @@ will be loaded into the <tt>MAIN</tt> context.
 </p>
 
 <p>The <em>str-file-name</em> specs can contain URLs. Both <tt>http://</tt> and <tt> file://</tt>
-URLs are supported.
+URLs are supported (URL access requires <tt>(module "curl.lsp")</tt>
+since newLISP Spark 10.8).
 </p>
 
 <!-- example -->
@@ -21324,6 +21351,10 @@ for modifying association lists.</p>
 <h2><span class="function">post-url</span></h2>
 <h4>syntax: (post-url <em>str-url</em> <em>str-content</em> [<em>str-content-type</em> [<em>str-option</em>] [<em>int-timeout</em> [ <em>str-header</em>]]])</h4>
 
+<p><b>Note (newLISP Spark 10.8):</b> no longer a built-in C primitive — provided
+by <tt>modules/curl.lsp</tt> (libcurl via FFI); load with
+<tt>(module "curl.lsp")</tt>. See the note at <a href="#get-url">get-url</a>.</p>
+
 <p>
 Sends an HTTP POST request to the URL in <em>str-url</em>.
 POST requests are used to post information collected from web entry forms to a web site.
@@ -22027,8 +22058,12 @@ lst <span class='arw'>&rarr;</span> ("xabc" "xyz")
 <h2><span class="function">put-url</span></h2>
 <h4>syntax: (put-url <em>str-url</em> <em>str-content</em> [<em>str-option</em>] [<em>int-timeout</em> [<em>str-header</em>]])</h4>
 
+<p><b>Note (newLISP Spark 10.8):</b> no longer a built-in C primitive — provided
+by <tt>modules/curl.lsp</tt> (libcurl via FFI); load with
+<tt>(module "curl.lsp")</tt>. See the note at <a href="#get-url">get-url</a>.</p>
+
 <p>
-	The HTTP PUT protocol is used to transfer information in <em>str-content</em> 
+	The HTTP PUT protocol is used to transfer information in <em>str-content</em>
 	to a file specified in <em>str-url</em>. The lesser-known HTTP PUT mode is 
 	frequently used for transferring web pages from HTML editors to Web servers.
 	In order to use PUT mode, the web server's software must be configured correctly.
@@ -22551,8 +22586,9 @@ containing the data.</p>
 
 <p>On failure the function returns <tt>nil</tt>. For error information, 
 use <a href="#sys-error">sys-error</a> when used on files. When used
-on URLs <a href="#net-error">net-error</a> gives more error
-information.</p>
+on URLs the function returns <tt>nil</tt>; URL access is provided by
+<tt>modules/curl.lsp</tt> (see <a href="#url_files">Specifying files as
+URLs</a>).</p>
 
 <!-- example -->
 
@@ -23912,7 +23948,8 @@ syntax: (save <em>str-file</em> <em>sym-1</em> [<em>sym-2</em> ... ])</h4>
 
 <p>
 	Saving to a URL 
-	will cause an HTTP PUT request to be sent to the URL.
+	will cause an HTTP PUT request to be sent to the URL
+	(requires <tt>(module "curl.lsp")</tt> since newLISP Spark 10.8).
 	In this mode, 
 	<tt>save</tt> can also be used 
 	to push program source 
@@ -28232,8 +28269,9 @@ in one swoop and returns the number of bytes written.</p>
 
 <p>On failure the function returns <tt>nil</tt>. For error information, 
 use <a href="#sys-error">sys-error</a> when used on files. When used
-on URLs <a href="#net-error">net-error</a> gives more error
-information.</p>
+on URLs the function returns <tt>nil</tt>; URL access is provided by
+<tt>modules/curl.lsp</tt> (see <a href="#url_files">Specifying files as
+URLs</a>).</p>
 
 <!-- example -->
 
@@ -28337,6 +28375,10 @@ functions, <em>sym</em> or <em>func</em> will be called with the number of
 bytes transferred for each block of data transferred.</p>
 
 <p>Specifying <tt>nil</tt> for the event will reset it to the initial default state.</p>
+
+<p><b>Note (newLISP Spark 10.8):</b> with the libcurl-based HTTP client
+(<tt>modules/curl.lsp</tt>, see <a href="#get-url">get-url</a>) the handler is
+called with the number of bytes for each block of data <em>received</em>.</p>
 
 <!-- example -->
 

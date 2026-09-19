@@ -1,0 +1,189 @@
+#!/usr/bin/env newlisp
+
+; qa-curl - test the libcurl FFI HTTP client (modules/curl.lsp)
+;
+; tests get-url, put-url, post-url, delete-url and URL support in
+; read-file, write-file, delete-file, load and save
+;
+; assumes the newlisp executable and modules/ directory in the current
+; directory, i.e. run from the main distribution directory:
+;
+;   ./newlisp qa/qa-specific-tests/qa-curl
+;
+
+(println)
+(println "Testing libcurl FFI HTTP client (modules/curl.lsp)")
+
+(when (not (file? "newlisp"))
+    (println ">>>>> Need a newlisp executable in the current directory for qa-curl")
+    (exit))
+
+(if (file? "modules/curl.lsp")
+    (load "modules/curl.lsp")
+    (module "curl.lsp"))
+
+(set 'start (time-of-day))
+(set 'port 10003)  ; port of the newLISP -http daemon
+(set 'rport 10004) ; port of the mini server (redirect/echo)
+(set 'failed 0)
+
+(define (check name expr)
+    (if expr
+        (println name " ->OK")
+        (begin (println " >>>> " name " ->ERROR") (inc failed))))
+
+(delete-file "qa-curl-junk.txt")
+(delete-file "qa-curl-file.txt")
+
+; ---------- local file scheme and error messages ----------
+
+(check "get-url bad URL"
+    (= "ERR: HTTP bad formed URL" (get-url "")))
+(check "put-url bad URL"
+    (= "ERR: HTTP bad formed URL" (put-url "" "abc")))
+(check "post-url bad URL"
+    (= "ERR: HTTP bad formed URL" (post-url "" "abc" "def")))
+(check "delete-url bad URL"
+    (= "ERR: HTTP bad formed URL" (delete-url "")))
+
+(check "get-url file://"
+    (starts-with (get-url "file://qa/qa-dot") "#!/usr/bin/env newlisp"))
+
+(check "put-url file://"
+    (= "12 bytes written" (put-url "file://qa-curl-file.txt" "file content")))
+(check "get-url file:// written"
+    (= "file content" (get-url "file://qa-curl-file.txt")))
+(check "delete-url file://"
+    (= "file deleted" (delete-url "file://qa-curl-file.txt")))
+(check "get-url file:// missing"
+    (= "ERR: HTTP file operation failed" (get-url "file://qa-curl-file.txt")))
+
+; ---------- mini server for redirect and POST echo ----------
+; handles four requests:
+;   GET /start -> 302 Location: /final  (twice: follow and raw tests)
+;   GET /final -> 200 "redirect-target"
+;   POST /echo -> 200 echoing the request body
+
+(define (mini-server port)
+    (let ((l (net-listen port "127.0.0.1")))
+        (dotimes (i 4)
+            (letn ((s (net-accept l))
+                   (req "") (chunk "") (clen 0) (hdr-end nil) (tries 0))
+                (until (and hdr-end (>= (length req) (+ hdr-end 4 clen)))
+                    (net-receive s chunk 4096)
+                    (extend req chunk)
+                    (unless hdr-end
+                        (set 'hdr-end (find "\r\n\r\n" req))
+                        (if (and hdr-end (regex "Content-Length: (\\d+)" req 1))
+                            (set 'clen (int $1))))
+                    (when (> (inc tries) 100) (throw "mini-server timeout")))
+                (cond
+                    ((find "GET /start " req)
+                        (net-send s "HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\n\r\n"))
+                    ((find "GET /final " req)
+                        (net-send s "HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\nredirect-target"))
+                    (true ; POST /echo
+                        (net-send s (append "HTTP/1.0 200 OK\r\nContent-Length: "
+                                            (string clen) "\r\n\r\n"
+                                            ((+ hdr-end 4) req)))))
+                (net-close s)))
+        (net-close l)))
+
+(spawn 'mini (mini-server rport))
+
+; ---------- start the newLISP HTTP daemon ----------
+
+(set 'pid (process (string "./newlisp -c -d " port)))
+(println "waiting for servers ...")
+(sleep 1500)
+
+; ---------- GET ----------
+
+(check "get-url 404"
+    (find "HTTP/1.0 404" (get-url (string "http://localhost:" port "/xyz.xyz"))))
+
+; ---------- write/read/delete via URL (delegation to curl.lsp) ----------
+
+; generate binary test data
+(set 'content "")
+(dotimes (i 10000)
+    (write-buffer content (pack "c" (rand 255))))
+
+(set 'targetURL (string "http://localhost:" port "/qa-curl-junk.txt"))
+
+(check "write-file to URL (binary)"
+    (find "transferred" (write-file targetURL content)))
+
+(check "read-file from URL (binary)"
+    (= content (read-file targetURL)))
+
+(check "get-url (binary)"
+    (= content (get-url targetURL)))
+
+(check "get-url list option"
+    (let ((r (get-url targetURL "list")))
+        (and (= 4 (length r))
+             (= content (r 1))
+             (starts-with (r 2) "HTTP/1.0 200")
+             (= 200 (r 3)))))
+
+(check "get-url header option"
+    (find "Content-length:" (get-url targetURL "header")))
+
+(check "get-url timeout and custom header"
+    (= content (get-url targetURL "" 5000 "X-QA-Test: qa-curl\r\n")))
+
+(check "put-url binary"
+    (find "transferred" (put-url targetURL content)))
+(check "get-url after put-url"
+    (= content (get-url targetURL)))
+
+(check "xfer-event fires on transfer"
+    (begin
+        (set 'transferred 0)
+        (xfer-event (fn (n) (inc 'transferred n)))
+        (get-url targetURL)
+        (xfer-event nil)
+        (> transferred 0)))
+
+; ---------- save/load via URL (delegation to curl.lsp) ----------
+
+(set 'key (uuid))
+(set 'verify key)
+(check "save to URL" (catch (save targetURL 'key) 'res))
+(check "load from URL" (and (catch (load targetURL) 'res) (= key verify)))
+
+; ---------- DELETE ----------
+
+(check "delete-url"
+    (find "deleted" (delete-url targetURL)))
+(check "delete-file URL"
+    (begin (write-file targetURL "x") (delete-file targetURL)))
+
+; ---------- redirect and POST via mini server ----------
+
+(check "get-url redirect follow"
+    (= "redirect-target" (get-url (string "http://127.0.0.1:" rport "/start"))))
+
+(check "get-url raw (no follow)"
+    (let ((r (get-url (string "http://127.0.0.1:" rport "/start") "list,raw")))
+        (and (= 302 (r 3)) (find "Location: /final" (r 0)))))
+
+(check "post-url echo"
+    (= "a=1&b=2" (post-url (string "http://127.0.0.1:" rport "/echo") "a=1&b=2")))
+
+; ---------- tear down ----------
+
+(sync 3000)
+(println "destroy -> " pid " ->" (destroy pid))
+
+(delete-file "qa-curl-junk.txt")
+(delete-file "qa-curl-file.txt")
+
+(println "\nduration -> " (- (time-of-day) start) " ms\n")
+
+(if (zero? failed)
+    (println ">>>>> libcurl FFI HTTP client SUCCESSFUL")
+    (println ">>>>> PROBLEM in libcurl FFI HTTP client: " failed " test(s) failed"))
+
+(exit)

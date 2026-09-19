@@ -7511,3 +7511,59 @@ Maintained by Ivan Rocha, Copyright (C) 2026 Ivan Rocha.
    - README.md and INSTALL.txt now describe Linux only; historical
      macOS hardware-calibration references (qa-bench reference
      machine) are kept as facts of record.
+
+
+10.8 / HTTP client reimplemented on libcurl via FFI
+    Maintained by Ivan Rocha, Copyright (C) 2026 Ivan Rocha.
+
+   The built-in C HTTP client has been removed; all HTTP requests are
+   now made with libcurl through the libffi-based FFI. The supported
+   platform matrix (Linux x86_64 and aarch64) is unchanged.
+
+   New module:
+   - modules/curl.lsp implements get-url, put-url, post-url and
+     delete-url in newLISP on top of libcurl. Load with
+     (module "curl.lsp"). The functions keep their classic names in
+     MAIN, signatures and semantics: the "header", "list", "debug" and
+     "raw" options, timeouts in milliseconds, custom headers, redirect
+     following, the HTTP_PROXY environment variable, file:// URLs and
+     the legacy "ERR: ..." message strings.
+   - The module is safe to load on older binaries (<= 10.7.6), where
+     the four functions still exist as protected C primitives: the
+     MAIN definitions are then skipped and the built-ins keep working.
+   - https:// URLs now work (the old client only spoke plain HTTP).
+   - xfer-event handlers set with (xfer-event sym-or-lambda) are
+     honored on received data; p_transferEvent publishes the handler
+     in the $transfer-event-handler system symbol for the module.
+
+   Sources:
+   - src/nl-web.c: the HTTP client (getPutPostDeleteUrl, p_getUrl,
+     p_putUrl, p_postUrl, p_deleteUrl, the socket timeout helpers,
+     parseUrl, parsePath, webError) removed; the built-in -http server
+     mode and base64-enc/base64-dec stay in C. Added
+     curlModuleRequest(), which delegates URL operations to the
+     functions defined by modules/curl.lsp.
+   - src/newlisp.c, src/nl-filesys.c: load, save, read-file,
+     write-file, append-file and delete-file on http:// URLs delegate
+     to the curl module; without (module "curl.lsp") they fail as if
+     the file could not be accessed. append-file on URLs keeps sending
+     the legacy "Pragma: append" header.
+   - src/primes.h, src/protos.h: the four *-url primitives removed.
+
+   Modules, examples:
+   - modules/xmlrpc-client.lsp loads curl.lsp for its post-url use.
+   - examples/async and examples/query load the curl module.
+   - makefiles/install.mk (and generated makefile_install) install
+     modules/curl.lsp.
+
+   Tests:
+   - New qa/qa-specific-tests/qa-curl: get/put/post/delete-url against
+     a local newLISP -http daemon (binary round-trips, "list"/"header"
+     options, timeout + custom header), redirect following and "raw"
+     mode plus POST echo against a spawned mini server, file:// URLs,
+     URL support in read-file/write-file/delete-file/save/load,
+     xfer-event, and the legacy error strings. Wired into the
+     'check' and 'checkall' Makefile targets.
+   - qa-net/qa-net6 load the curl module; the now obsolete
+     test-get-url/put-url/post-url/delete-url definitions were removed
+     from qa-dot, qa-comma and qa-bench (coverage moved to qa-curl).

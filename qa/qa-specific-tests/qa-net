@@ -32,6 +32,11 @@
 	(exit)
 )
 
+; HTTP client functions are provided by the libcurl FFI module
+(if (file? "modules/curl.lsp")
+	(load "modules/curl.lsp")
+	(module "curl.lsp"))
+
 (set 'start (time-of-day))
 
 (println "Testing IPv4 networking functions")

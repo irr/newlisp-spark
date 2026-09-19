@@ -1939,7 +1939,9 @@ function factory can be used for a string stream:</p>
 
 ; tokenize using replace with regular expressions
 ; names are of the form &lt;a href="example.lsp"&gt;example.lsp&lt;/a&gt;
-   
+
+(module "curl.lsp") ; get-url via libcurl FFI (newLISP Spark 10.8+)
+
 (set 'page (get-url "http://newlisp.digidep.net/scripts/"))
 (replace {&gt;(.*lsp)&lt;} page (first (push $1 links)) 0) ; old technique
 ;(set 'links (find-all {&gt;(.*lsp)&lt;} page $1)) ; new technique
@@ -3215,6 +3217,12 @@ result: (7 11 15 19 23)
 <p>As with the previous examples all IP numbers could be replaced with <tt>"localhost"</tt> or any other host-name or IP number to test a distributed application on a single host before deployment in a distributed environment with many networked hosts.</p>
 
 <h3>Transferring files</h3>
+
+<p><b>Note (newLISP Spark 10.8):</b> all HTTP access is performed by
+<tt>modules/curl.lsp</tt> on top of libcurl via the FFI; load it with
+<tt>(module "curl.lsp")</tt> before using URLs with the file functions or the
+<tt>get-url</tt>/<tt>put-url</tt>/<tt>post-url</tt>/<tt>delete-url</tt>
+functions shown below.</p>
 
 <p>Files can be read from or written to remote nodes with the same functions used to read and write files to a local file system. This functionality is currently only available on Unix systems when talking to newLISP servers. As functions are based on standard <tt>GET</tt> and <tt>PUT</tt> HTTP protocols they can also be used communicating with web servers. Note that few Apache web-server installations have enabled the <tt>PUT</tt> protocol by default.</p>
 

@@ -1,6 +1,6 @@
 #
 
-VERSION=10.7.6
+VERSION=10.8
 
 # NOTE when changing PREFIX, then newlisp should only run
 # run in an environment, where NEWLISPDIR is predefined,
@@ -48,6 +48,7 @@ install:
 	-install -m 644 modules/canvas.lsp $(datadir)/newlisp/modules/canvas.lsp
 	-install -m 644 modules/cgi.lsp $(datadir)/newlisp/modules/cgi.lsp
 	-install -m 644 modules/crypto.lsp $(datadir)/newlisp/modules/crypto.lsp
+	-install -m 644 modules/curl.lsp $(datadir)/newlisp/modules/curl.lsp
 	-install -m 644 modules/ftp.lsp $(datadir)/newlisp/modules/ftp.lsp
 	-install -m 644 modules/getopts.lsp $(datadir)/newlisp/modules/getopts.lsp
 	-install -m 644 modules/gsl.lsp $(datadir)/newlisp/modules/gsl.lsp
@@ -110,6 +111,7 @@ install_home:
 	-install -m 644 modules/canvas.lsp $(HOME)/share/newlisp/modules/canvas.lsp
 	-install -m 644 modules/cgi.lsp $(HOME)/share/newlisp/modules/cgi.lsp
 	-install -m 644 modules/crypto.lsp $(HOME)/share/newlisp/modules/crypto.lsp
+	-install -m 644 modules/curl.lsp $(HOME)/share/newlisp/modules/curl.lsp
 	-install -m 644 modules/ftp.lsp $(HOME)/share/newlisp/modules/ftp.lsp
 	-install -m 644 modules/getopts.lsp $(HOME)/share/newlisp/modules/getopts.lsp
 	-install -m 644 modules/gsl.lsp $(HOME)/share/newlisp/modules/gsl.lsp

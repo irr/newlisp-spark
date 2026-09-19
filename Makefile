@@ -20,8 +20,8 @@
 # and file LOCALIZATION for details
 #
 
-VERSION = 10.7.6
-INT_VERSION = 10706
+VERSION = 10.8
+INT_VERSION = 10800
 
 default: makefile_build
 	make -f makefile_build
@@ -77,6 +77,7 @@ check:
 	./newlisp qa/qa-specific-tests/qa-json
 	./newlisp qa/qa-specific-tests/qa-setsig
 	./newlisp qa/qa-specific-tests/qa-net
+	./newlisp qa/qa-specific-tests/qa-curl
 	./newlisp qa/qa-specific-tests/qa-cilk
 	./newlisp qa/qa-specific-tests/qa-ref
 	./newlisp qa/qa-specific-tests/qa-message
@@ -102,6 +103,7 @@ checkall:
 	./newlisp qa/qa-specific-tests/qa-setsig
 	./newlisp qa/qa-specific-tests/qa-net
 	./newlisp qa/qa-specific-tests/qa-net6
+	./newlisp qa/qa-specific-tests/qa-curl
 	./newlisp qa/qa-specific-tests/qa-cilk
 	./newlisp qa/qa-specific-tests/qa-ref
 	./newlisp qa/qa-specific-tests/qa-message
@@ -184,8 +186,8 @@ dist: clean
 #
 version:
 	sed -i.bak -E 's/int version = .+;/int version = $(INT_VERSION);/' src/newlisp.c
-	sed -i.bak -E 's/newLISP v.[[:digit:]]+.[[:digit:]]+.[[:digit:]]+(-dev)? /newLISP v.$(VERSION) /' src/newlisp.c
-	sed -i.bak -E 's/newLISP\/[[:digit:]]+.[[:digit:]]+.[[:digit:]]+(-dev)?/newLISP\/$(VERSION)/' src/nl-web.c
+	sed -i.bak -E 's/newLISP Spark v\.[0-9]+(\.[0-9]+)?(\.[0-9]+)?[a-z0-9]*/newLISP Spark v.$(VERSION)/g' src/newlisp.c
+	sed -i.bak -E 's/newLISP\/[0-9]+(\.[0-9]+)?(\.[0-9]+)?/newLISP\/$(VERSION)/' src/nl-web.c
 	sed -i.bak -E 's/newLISP v.+ Manual/newLISP v.$(VERSION) Manual/' doc/newlisp_manual.html
 	sed -i.bak -E 's/Reference v.+<\/h2>/Reference v.$(VERSION)<\/h2>/' doc/newlisp_manual.html
 	sed -i.bak -E 's/VERSION=.+/VERSION=$(VERSION)/' configure-alt

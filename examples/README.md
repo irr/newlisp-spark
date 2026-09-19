@@ -8,7 +8,7 @@ unless stated otherwise).
 
 | File | Description |
 |------|-------------|
-| `async` | demo asynchronous HTTP `get-url` requests |
+| `async` | demo asynchronous HTTP `get-url` requests (HTTP client lives in `modules/curl.lsp`, loaded via `(module "curl.lsp")`) |
 | `callback` | demo callbacks from C into newLISP (needs `newlisp.so`, see below) |
 | `client` | demo for TCP networking client |
 | `env.cgi` | httpd server CGI file to show environment |
@@ -31,6 +31,16 @@ unless stated otherwise).
 | `upload.cgi` | CGI for uploading a file (works on Apache and newLISP httpd) |
 | `upload.html` | used for `upload.cgi` |
 | `xmlrpc.cgi` | demo for xmlrpc CGI |
+
+## HTTP client (`get-url` & friends)
+
+Since newLISP Spark 10.8 the HTTP client (`get-url`, `put-url`,
+`post-url`, `delete-url`) is no longer built into the interpreter —
+it is implemented in pure newLISP on top of **libcurl** via the FFI in
+`modules/curl.lsp`. Scripts using it (like `async` and `query` here)
+load it with `(module "curl.lsp")`; the classic API is unchanged and
+`https://` is now supported. The built-in HTTP *server* below is
+unaffected and stays in C.
 
 ## Built-in HTTP server
 

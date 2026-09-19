@@ -48,9 +48,15 @@ This enhanced release overhauls the newLISP engine with a **Direct-Threaded Byte
   - **FOOP fixed** (`:` dispatch, `self`, segfault removed): symbols merely *named* `self` are no longer miscompiled as self-recursion; VM frame entry now maintains the FOOP `objSymbol` (so `(self n)` works in compiled methods); `(: method obj ...)` compiles with the raw method-name symbol and `p_colon` accepts `(quote sym)`.
   - **Zero compiler warnings**: the build is clean under `-Wall` on aarch64 GCC (fixed `-Wunused-value`, `-Wmisleading-indentation`, `-Wunused-result`, `-Wstringop-truncation`, `-Wrestrict`, `-Wformat-truncation`/`-Wformat-overflow`, `-Walloca-larger-than`).
 
+- **HTTP Client on libcurl via FFI (`modules/curl.lsp`, new in 10.8)**:
+  - **No more C HTTP client**: `get-url`, `put-url`, `post-url` and `delete-url` are implemented in pure newLISP on top of **libcurl** through the libffi FFI — the legacy raw-socket C client was removed from `nl-web.c`.
+  - **Drop-in compatible**: same names, signatures, options (`"header"`, `"list"`, `"debug"`, `"raw"`), timeouts, custom headers, `HTTP_PROXY` support, `file://` URLs and `ERR:` message strings; `xfer-event` progress callbacks are honored. Load with `(module "curl.lsp")`.
+  - **URL file I/O kept**: `read-file`, `write-file`, `append-file`, `delete-file`, `load` and `save` on `http://` URLs delegate to the module. Bonus: **`https://` now works** (the old client spoke plain HTTP only).
+  - **Built-in HTTP server unchanged**: the `newlisp -http -d PORT` server/CGI mode stays in C.
+
 - **Memory Safety & Rock-Solid Compatibility**:
   - **Magic-Tagged Bytecode Handles**: Bytecode objects are tagged with `BYTECODE_MAGIC` (`0xBEEC0DE0`) in `cell->aux`, preserving newLISP's native last-element pointer optimization on standard lists and eliminating memory corruption hazards.
-  - **100% Test Suite Pass**: All 396 built-in primitives, contexts as objects, and scoping tests in the `qa-dot` suite pass with **0 errors** — and the complete extended suite (`make testall`, 21 tests incl. Cilk/FOOP/libffi/bigint/network) passes end-to-end on x86_64 **and aarch64/ARM64 (DGX Spark)**.
+  - **100% Test Suite Pass**: All 374 built-in primitives, contexts as objects, and scoping tests in the `qa-dot` suite pass with **0 errors** — and the complete extended suite (`make testall`, 21 tests incl. Cilk/FOOP/libffi/bigint/network) passes end-to-end on x86_64 **and aarch64/ARM64 (DGX Spark)**.
 
 - **Modernized Interactive REPL (`newlisp.c`)**:
   - **Automatic Multi-Line Input**: Automatically detects incomplete expressions (unclosed parentheses `(...)`, double-quoted strings `"..."`, `{...}` braced strings with nesting, and `[text]...[/text]` tags) and seamlessly collects continuation lines until brackets are balanced, then evaluates immediately.
@@ -102,6 +108,16 @@ Then open `http://localhost:8080/` for the CGI directory listing of the
 examples. See [`examples/README.md`](examples/README.md) for details and
 the callback/embedding demo.
 
+### Try it: HTTP Client (libcurl via FFI)
+The HTTP client functions live in `modules/curl.lsp` (libcurl + libffi,
+no C client in the interpreter anymore):
+```bash
+# with the server above still running:
+newlisp -e '(module "curl.lsp") (println (get-url "http://localhost:8080/" "list"))'
+```
+The classic API is unchanged: `(get-url url ["header|list|debug|raw"]
+[timeout-ms [header]])`, likewise `put-url`, `post-url`, `delete-url`.
+
 ---
 
 ## Testing/Validation (including Regression Test)
@@ -143,7 +159,7 @@ make test-comma
 ├── qa/                       # Test suites (run from the repository root)
 │   ├── qa-dot / qa-comma     # Complete language regression test suites (`make test` / `make test-comma`)
 │   └── qa-specific-tests/    # Extended suite: Cilk, FOOP, libffi, bigint, network, pipes (`make testall`)
-├── modules/                  # Standard library modules (crypto, sqlite3, stat, etc.)
+├── modules/                  # Standard library modules (curl, crypto, sqlite3, stat, etc.)
 ├── examples/                 # Sample applications and scripts
 └── doc/
     ├── ARCHITECTURE.md       # VM bytecode instruction set, memory layout & GC architecture

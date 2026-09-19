@@ -7,7 +7,7 @@ disable-model-invocation: true
 # newLISP Spark Language Guide
 
 newLISP is a LISP-like, dynamically-scoped scripting language. **newLISP Spark**
-(this repository, v10.7.6s1) is a modernized distribution adding a
+(this repository, v10.8) is a modernized distribution adding a
 direct-threaded bytecode VM, full tail-call optimization (TCO), and a
 generational GC, while remaining 100% source-compatible with classic newLISP.
 

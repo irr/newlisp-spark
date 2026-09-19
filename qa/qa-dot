@@ -831,9 +831,6 @@ true
 (define (test-delete-file ) 
   (and (copy-file "qa/qa-dot" "junk") (delete-file "junk")))
 
-(define (test-delete-url )
-  (= "ERR: HTTP bad formed URL" (delete-url "")))
-
 (define (test-destroy)
  	(if (find ostype '("Linux" "BSD" "SunOS" "AIX" "Tru64Unix" "Cygwin"))  
 		(set 'pid (fork (dotimes (t 100) (sleep 100))))
@@ -1434,12 +1431,6 @@ true
 
 (define (test-get-string )
   (= "hello" (get-string (address "hello"))))
-
-(define (test-get-url )
-  (and
-    (starts-with (get-url "file://qa/qa-dot") "#!/usr/bin/env newlisp")
-    (= "ERR: HTTP bad formed URL" (get-url ""))
-))
 
 
 (define (test-global)
@@ -2302,9 +2293,6 @@ true
 	)
 )
 
-(define (test-post-url )
-  (= "ERR: HTTP bad formed URL" (post-url "" "abc" "def")))
-
 (define (test-pow )
   (and
     (= 1024 (pow 2 10))
@@ -2472,9 +2460,6 @@ true
          (set 'lst l)
          (push 'y lst -1)
          (= lst '(x y))))
-
-(define (test-put-url ) 
-  (= "ERR: HTTP bad formed URL" (put-url "" "abc")))
 
 (define (test-pv )
   (< (sub (pv 0.1 10 1000 100000 0 0) -44696.89605) 1e-05))

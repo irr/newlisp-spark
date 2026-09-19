@@ -1,6 +1,6 @@
 # newLISP Spark — VM, TCO, GC, Build & Test
 
-Spark-specific behavior that goes beyond classic newLISP (v10.7.6s1).
+Spark-specific behavior that goes beyond classic newLISP (v10.8).
 Sources: `README.md`, `doc/ARCHITECTURE.md`, `src/nl-vm.c`, `src/newlisp.c`.
 
 ## Bytecode VM (automatic, transparent)
@@ -112,8 +112,8 @@ Benchmarks: `bench/fib.lsp`, `bench/loop.lsp`, `bench/tco.lsp` (+ Python
 ## Version / capability probes
 
 ```lisp
-(sys-info)   ; -> (bits mem … version …) e.g. version 10706
+(sys-info)   ; -> (bits mem … version …) e.g. version 10800
 (ostype)     ; "Linux"
 ```
 
-`newlisp -v` → `newLISP Spark v.10.7.6s1 64-bit on Linux IPv4/6 UTF-8 libffi.`
+`newlisp -v` → `newLISP Spark v.10.8 64-bit on Linux IPv4/6 UTF-8 libffi.`

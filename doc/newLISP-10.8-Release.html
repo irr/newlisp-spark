@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html
+	PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html>
+
+<head>
+	<title>newLISP Spark v.10.8 Release Notes </title>
+
+	<style type="text/css" media="screen">
+		h1 {
+			font-family: Optima, Georgia, Times New Roman, Times, serif;
+			font-size: 200%;
+			font-weight: 500;
+			color: #404040;
+		}
+
+		h2,
+		h3 {
+			font-family: Lucida Sans, Helvetica, sans-serif;
+			color: #404040;
+			line-height: 120%;
+		}
+
+		body,
+		p {
+			font-family: Lucida Sans, Helvetica, sans-serif;
+			color: #404040;
+			line-height: 120%;
+			font-size: 110%;
+			max-width: 90%;
+		}
+
+		tt {
+			font-family: Courier;
+			color: #606060;
+			line-height: 120%;
+		}
+
+		em {
+			font-family: Courier;
+			color: #606060;
+		}
+
+		li {
+			margin-bottom: 15px;
+		}
+	</style>
+
+</head>
+
+<body>
+	<h1>newLISP Spark v.10.8 Stable Release
+		<font color="red" size="-1">2026-09-19</font>
+	</h1>
+
+	<p>This release reimplements the HTTP client on top of
+	<b>libcurl</b> using the libffi-based FFI. The built-in C HTTP client
+	was removed; all HTTP requests are now made by pure newLISP code in
+	<tt>modules/curl.lsp</tt>.</p>
+
+	<h3>Changes</h3>
+
+	<ul>
+		<li><tt>get-url</tt>, <tt>put-url</tt>, <tt>post-url</tt> and
+		<tt>delete-url</tt> are no longer C primitives. They are
+		implemented in <tt>modules/curl.lsp</tt> (libcurl via FFI) and
+		become available after <tt>(module "curl.lsp")</tt>. Requires a
+		libffi-enabled build (<tt>-DFFI</tt>, the default) and a Linux
+		shared libcurl library.</li>
+
+		<li>URL support in <tt>load</tt>, <tt>save</tt>,
+		<tt>read-file</tt>, <tt>write-file</tt>, <tt>append-file</tt> and
+		<tt>delete-file</tt> now delegates to the curl module. Without
+		<tt>(module "curl.lsp")</tt> loaded, these functions fail on
+		<tt>http://</tt> URLs as if the file could not be accessed.</li>
+
+		<li>The built-in HTTP server (<tt>newlisp -http -d
+		port</tt>) and <tt>base64-enc</tt>/<tt>base64-dec</tt> remain
+		implemented in C and are unchanged.</li>
+
+		<li><tt>modules/xmlrpc-client.lsp</tt> loads the curl module
+		automatically.</li>
+	</ul>
+
+	<h3>New Features</h3>
+
+	<ul>
+		<li><tt>https://</tt> URLs are now supported by the HTTP client
+		(the legacy client only spoke plain HTTP).</li>
+	</ul>
+
+	<h3>Compatibility with previous versions</h3>
+	<p>The four <tt>*-url</tt> functions keep their classic names,
+	signatures, options (<tt>"header"</tt>, <tt>"list"</tt>,
+	<tt>"debug"</tt>, <tt>"raw"</tt>), timeouts, custom headers,
+	<tt>HTTP_PROXY</tt> support, <tt>file://</tt> handling and
+	<tt>ERR:</tt> message strings. <tt>xfer-event</tt> handlers are
+	called for each block of data received. Scripts only need to add
+	<tt>(module "curl.lsp")</tt>. The module can also be loaded on older
+	binaries (10.7.6 and earlier), where it detects the built-in C
+	primitives and leaves them untouched. Otherwise compatible with the
+	previous versions in the 10.x series.</p>
+
+	<center>&part;</center>
+
+</body>
+
+</html>
