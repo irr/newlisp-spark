@@ -1,8 +1,7 @@
 # newLISP Spark — Built-in Function Reference
 
 Condensed from `doc/newlisp_manual.html` (newLISP Spark v10.8).
-Full details, examples and edge cases: `doc/newlisp_manual.html` (repo)
-or `/usr/local/share/doc/newlisp/newlisp_manual.html` (installed).
+Full details, examples and edge cases: `doc/newlisp_manual.html`.
 
 Predicate names end in `?`. In syntax lines, `<angle-bracket>` words denote
 argument roles (`str`=string, `int`=integer, `num`=number, `list`=list,

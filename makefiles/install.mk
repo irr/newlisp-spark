@@ -12,60 +12,15 @@ bindir=$(prefix)/bin
 mandir=$(prefix)/share/man
 libdir=$(prefix)/lib
 
-# this is the standard install in /usr/local/bin and /usr/local/share
-# which as to be done as 'root' with supersuser permissions
+# copies only the newlisp executable to $(bindir)
+# which has to be done as 'root' with superuser permissions
 # for an install in your home directory use make install_home
-#
-# One-line description for distribution packages: 
-# newLISP is a LISP like, general purpose scripting language. 
-#
-# Longer description for distribution packages: 
-# newLISP is a scripting language for developing web applications and programs 
-# in general and in the domains of artificial intelligence (AI) and statistics.
 
 install:
-	-install -d $(datadir)/newlisp
-	-install -d $(datadir)/newlisp/modules
-	-install -d $(datadir)/newlisp/util
-	-install -d $(datadir)/doc/newlisp
-	-install -d $(mandir)/man1
-	-rm $(bindir)/newlisp
-	-install -m 755  newlisp $(bindir)/newlisp-$(VERSION)
-	-ln -s $(bindir)/newlisp-$(VERSION) $(bindir)/newlisp
-	-install -m 755 util/newlispdoc $(bindir)/newlispdoc
-	-install -m 644 util/syntax.cgi $(datadir)/newlisp/util/syntax.cgi
-	-install -m 644 util/newlisp.vim $(datadir)/newlisp/util/newlisp.vim
-	-install -m 644 doc/COPYING.txt $(datadir)/doc/newlisp/COPYING
-	-install -m 644 doc/CREDITS.txt $(datadir)/doc/newlisp/CREDITS
-	-install -m 644 doc/newlisp_manual.html $(datadir)/doc/newlisp/newlisp_manual.html
-	-install -m 644 doc/newlisp_index.html $(datadir)/doc/newlisp/newlisp_index.html
-	-install -m 644 doc/manual_frame.html $(datadir)/doc/newlisp/manual_frame.html
-	-install -m 644 doc/CodePatterns.html $(datadir)/doc/newlisp/CodePatterns.html
-	-install -m 644 doc/newLISPdoc.html $(datadir)/doc/newlisp/newLISPdoc.html
-	-install -m 644 doc/newLISP-$(VERSION)-Release.html $(datadir)/doc/newlisp/newLISP-$(VERSION)-Release.html
-	-install -m 644 doc/newlisp.1 $(mandir)/man1/newlisp.1
-	-install -m 644 doc/newlispdoc.1 $(mandir)/man1/newlispdoc.1
-	-install -m 644 modules/canvas.lsp $(datadir)/newlisp/modules/canvas.lsp
-	-install -m 644 modules/cgi.lsp $(datadir)/newlisp/modules/cgi.lsp
-	-install -m 644 modules/crypto.lsp $(datadir)/newlisp/modules/crypto.lsp
-	-install -m 644 modules/curl.lsp $(datadir)/newlisp/modules/curl.lsp
-	-install -m 644 modules/ftp.lsp $(datadir)/newlisp/modules/ftp.lsp
-	-install -m 644 modules/getopts.lsp $(datadir)/newlisp/modules/getopts.lsp
-	-install -m 644 modules/gsl.lsp $(datadir)/newlisp/modules/gsl.lsp
-	-install -m 644 modules/infix.lsp $(datadir)/newlisp/modules/infix.lsp
-	-install -m 644 modules/mysql.lsp $(datadir)/newlisp/modules/mysql.lsp
-	-install -m 644 modules/odbc.lsp $(datadir)/newlisp/modules/odbc.lsp
-	-install -m 644 modules/plot.lsp $(datadir)/newlisp/modules/plot.lsp
-	-install -m 644 modules/pop3.lsp $(datadir)/newlisp/modules/pop3.lsp
-	-install -m 644 modules/postgres.lsp $(datadir)/newlisp/modules/postgres.lsp
-	-install -m 644 modules/postscript.lsp $(datadir)/newlisp/modules/postscript.lsp
-	-install -m 644 modules/smtp.lsp $(datadir)/newlisp/modules/smtp.lsp
-	-install -m 644 modules/smtpx.lsp $(datadir)/newlisp/modules/smtpx.lsp
-	-install -m 644 modules/sqlite3.lsp $(datadir)/newlisp/modules/sqlite3.lsp
-	-install -m 644 modules/stat.lsp $(datadir)/newlisp/modules/stat.lsp
-	-install -m 644 modules/unix.lsp $(datadir)/newlisp/modules/unix.lsp
-	-install -m 644 modules/xmlrpc-client.lsp $(datadir)/newlisp/modules/xmlrpc-client.lsp
-	-install -m 644 modules/zlib.lsp $(datadir)/newlisp/modules/zlib.lsp
+	-install -d $(bindir)
+	-rm -f $(bindir)/newlisp
+	-rm -f $(bindir)/newlisp-$(VERSION)
+	-install -m 755 newlisp $(bindir)/newlisp
 
 # installs the newLISP shared library, needed for embedding and
 # callback examples; the library is a separate build flavor:
@@ -77,6 +32,7 @@ install_lib:
 
 uninstall:
 	-rm  $(bindir)/newlisp
+	-rm  $(bindir)/newlisp-$(VERSION)
 	-rm  $(bindir)/newlispdoc
 	-rm  $(bindir)/newlisp-edit
 	-rm  -rf $(datadir)/newlisp
@@ -88,47 +44,8 @@ uninstall:
 # installs newLISP in home directory
 
 install_home:
-	-install -d $(HOME)/bin
-	-install -d $(HOME)/share/newlisp
-	-install -d $(HOME)/share/newlisp/modules
-	-install -d $(HOME)/share/newlisp/util
-	-install -d $(HOME)/share/doc/newlisp/
-	-install -d $(HOME)/share/man/man1
-	-install -m 755 newlisp $(HOME)/bin/newlisp
-	-install -m 755 util/newlispdoc $(HOME)/bin/newlispdoc
-	-install -m 644 util/syntax.cgi $(HOME)/share/newlisp/util/syntax.cgi
-	-install -m 644 util/newlisp.vim $(HOME)/share/newlisp/util/newlisp.vim
-	-install -m 644 doc/COPYING.txt $(HOME)/share/doc/newlisp/COPYING
-	-install -m 644 doc/CREDITS.txt $(HOME)/share/doc/newlisp/CREDITS
-	-install -m 644 doc/newlisp_manual.html $(HOME)/share/doc/newlisp/newlisp_manual.html
-	-install -m 644 doc/newlisp_index.html $(HOME)/share/doc/newlisp/newlisp_index.html
-	-install -m 644 doc/manual_frame.html $(HOME)/share/doc/newlisp/manual_frame.html
-	-install -m 644 doc/CodePatterns.html $(HOME)/share/doc/newlisp/CodePatterns.html
-	-install -m 644 doc/newLISPdoc.html $(HOME)/share/doc/newlisp/newLISPdoc.html
-	-install -m 644 doc/newLISP-$(VERSION)-Release.html $(HOME)/share/doc/newlisp/newLISP-$(VERSION)-Release.html
-	-install -m 644 doc/newlisp.1 $(HOME)/share/man/man1/newlisp.1
-	-install -m 644 doc/newlispdoc.1 $(HOME)/share/man/man1/newlispdoc.1
-	-install -m 644 modules/canvas.lsp $(HOME)/share/newlisp/modules/canvas.lsp
-	-install -m 644 modules/cgi.lsp $(HOME)/share/newlisp/modules/cgi.lsp
-	-install -m 644 modules/crypto.lsp $(HOME)/share/newlisp/modules/crypto.lsp
-	-install -m 644 modules/curl.lsp $(HOME)/share/newlisp/modules/curl.lsp
-	-install -m 644 modules/ftp.lsp $(HOME)/share/newlisp/modules/ftp.lsp
-	-install -m 644 modules/getopts.lsp $(HOME)/share/newlisp/modules/getopts.lsp
-	-install -m 644 modules/gsl.lsp $(HOME)/share/newlisp/modules/gsl.lsp
-	-install -m 644 modules/infix.lsp $(HOME)/share/newlisp/modules/infix.lsp
-	-install -m 644 modules/mysql.lsp $(HOME)/share/newlisp/modules/mysql.lsp
-	-install -m 644 modules/plot.lsp $(HOME)/share/newlisp/modules/plot.lsp
-	-install -m 644 modules/odbc.lsp $(HOME)/share/newlisp/modules/odbc.lsp
-	-install -m 644 modules/pop3.lsp $(HOME)/share/newlisp/modules/pop3.lsp
-	-install -m 644 modules/postgres.lsp $(HOME)/share/newlisp/modules/postgres.lsp
-	-install -m 644 modules/postscript.lsp $(HOME)/share/newlisp/modules/postscript.lsp
-	-install -m 644 modules/smtp.lsp $(HOME)/share/newlisp/modules/smtp.lsp
-	-install -m 644 modules/smtpx.lsp $(HOME)/share/newlisp/modules/smtpx.lsp
-	-install -m 644 modules/sqlite3.lsp $(HOME)/share/newlisp/modules/sqlite3.lsp
-	-install -m 644 modules/stat.lsp $(HOME)/share/newlisp/modules/stat.lsp
-	-install -m 644 modules/unix.lsp $(HOME)/share/newlisp/modules/unix.lsp
-	-install -m 644 modules/xmlrpc-client.lsp $(HOME)/share/newlisp/modules/xmlrpc-client.lsp
-	-install -m 644 modules/zlib.lsp $(HOME)/share/newlisp/modules/zlib.lsp
+	-install -d $(HOME)/.local/bin
+	-install -m 755 newlisp $(HOME)/.local/bin/newlisp
 
 
 uninstall_home:
@@ -136,6 +53,7 @@ uninstall_home:
 	-rm  -rf $(HOME)/share/doc/newlisp
 	-rm  $(HOME)/share/man/man1/newlisp.1
 	-rm  $(HOME)/share/man/man1/newlispdoc.1
+	-rm $(HOME)/.local/bin/newlisp
 	-rm $(HOME)/bin/newlisp
 	-rm $(HOME)/bin/newlispdoc
 

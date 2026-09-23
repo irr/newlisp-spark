@@ -437,49 +437,10 @@ mandir=\$(DESTDIR)${mandir}
 man1dir=\$(DESTDIR)${man1dir}
 
 install:
-	-install -d \$(pkgdatadir)
-	-install -d \$(pkgdatadir)/modules
-	-install -d \$(pkgdatadir)/util
-	-install -d \$(docdir)
-	-install -d \$(man1dir)
 	-install -d \$(bindir)
 	-rm -f \$(bindir)/newlisp
-	-install -m 755  newlisp \$(bindir)/\$(package)-\$(version)
-	-cd \$(bindir); ln -s \$(package)-\$(version) newlisp
-	-install -m 755 util/newlispdoc \$(bindir)/newlispdoc
-	-install -m 644 util/syntax.cgi \$(pkgdatadir)/util/syntax.cgi
-	-install -m 644 util/newlisp.vim \$(pkgdatadir)/util/newlisp.vim
-	-install -m 644 doc/COPYING \$(docdir)/COPYING
-	-install -m 644 doc/CREDITS \$(docdir)/CREDITS
-	-install -m 644 doc/newlisp_manual.html \$(docdir)/newlisp_manual.html
-	-install -m 644 doc/newlisp_index.html \$(docdir)/newlisp_index.html
-	-install -m 644 doc/manual_frame.html \$(docdir)/manual_frame.html
-	-install -m 644 doc/CodePatterns.html \$(docdir)/CodePatterns.html
-	-install -m 644 doc/newLISPdoc.html \$(docdir)/newLISPdoc.html
-	-install -m 644 doc/newLISP-${version}-Release.html \$(docdir)/newLISP-${version}-Release.html
-	-install -m 644 doc/newlisp.1 \$(man1dir)/newlisp.1
-	-install -m 644 doc/newlispdoc.1 \$(man1dir)/newlispdoc.1
-	-install -m 644 modules/canvas.lsp \$(pkgdatadir)/modules/canvas.lsp
-	-install -m 644 modules/cgi.lsp \$(pkgdatadir)/modules/cgi.lsp
-	-install -m 644 modules/crypto.lsp \$(pkgdatadir)/modules/crypto.lsp
-	-install -m 644 modules/ftp.lsp \$(pkgdatadir)/modules/ftp.lsp
-	-install -m 644 modules/getopts.lsp \$(pkgdatadir)/modules/getopts.lsp
-	-install -m 644 modules/gsl.lsp \$(pkgdatadir)/modules/gsl.lsp
-	-install -m 644 modules/infix.lsp \$(pkgdatadir)/modules/infix.lsp
-	-install -m 644 modules/macro.lsp \$(pkgdatadir)/modules/macro.lsp
-	-install -m 644 modules/mysql.lsp \$(pkgdatadir)/modules/mysql.lsp
-	-install -m 644 modules/odbc.lsp \$(pkgdatadir)/modules/odbc.lsp
-	-install -m 644 modules/plot.lsp \$(pkgdatadir)/modules/plot.lsp
-	-install -m 644 modules/pop3.lsp \$(pkgdatadir)/modules/pop3.lsp
-	-install -m 644 modules/postgres.lsp \$(pkgdatadir)/modules/postgres.lsp
-	-install -m 644 modules/postscript.lsp \$(pkgdatadir)/modules/postscript.lsp
-	-install -m 644 modules/smtp.lsp \$(pkgdatadir)/modules/smtp.lsp
-	-install -m 644 modules/smtpx.lsp \$(pkgdatadir)/modules/smtpx.lsp
-	-install -m 644 modules/sqlite3.lsp \$(pkgdatadir)/modules/sqlite3.lsp
-	-install -m 644 modules/stat.lsp \$(pkgdatadir)/modules/stat.lsp
-	-install -m 644 modules/unix.lsp \$(pkgdatadir)/modules/unix.lsp
-	-install -m 644 modules/xmlrpc-client.lsp \$(pkgdatadir)/modules/xmlrpc-client.lsp
-	-install -m 644 modules/zlib.lsp \$(pkgdatadir)/modules/zlib.lsp
+	-rm -f \$(bindir)/\$(package)-\$(version)
+	-install -m 755 newlisp \$(bindir)/newlisp
 
 
 uninstall:

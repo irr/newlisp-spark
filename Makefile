@@ -35,10 +35,10 @@ help:
 	@echo "\nDo one of the following:"
 	@echo "  make                 # auto-select one of the predefined makefiles and build newLISP"
 	@echo "  make help            # display this help"
-	@echo "  make install         # install on LINUX/UNIX in /usr/local/bin and /usr/local/share (need to be root)"
-	@echo "  make uninstall       # uninstall on LINUX/UNIX from /usr/local/bin and /usr/local/share (need to be root)"
-	@echo "  make install_home    # install on LINUX/UNIX in users home directory "
-	@echo "  make uninstall_home  # uninstall on LINUX/UNIX from users home directory "
+	@echo "  make install         # install the newlisp binary in /usr/local/bin (need to be root)"
+	@echo "  make uninstall       # uninstall newlisp from /usr/local (need to be root)"
+	@echo "  make install_home    # install the newlisp binary in ~/.local/bin"
+	@echo "  make uninstall_home  # uninstall the newlisp binary from ~/.local/bin"
 	@echo
 	@echo "  make clean           # remove all *.o and .tar files etc. USE BETWEEN FLAVORS!"
 	@echo "  make check           # run qa-dot, qa-net, qa-xml etc. test scripts"
@@ -133,7 +133,7 @@ bench:
 # but when using 'make -f makefiles/xxx.mk' the file hasn't been
 # created and is created with this dependency
 
-makefile_install:
+makefile_install: makefiles/install.mk
 	cp makefiles/install.mk makefile_install
 
 install: makefile_install
@@ -142,13 +142,13 @@ install: makefile_install
 install_lib: makefile_install
 	-make -f makefile_install install_lib
 
-uninstall:
+uninstall: makefile_install
 	-make -f makefile_install uninstall
 
-install_home:
+install_home: makefile_install
 	-make -f makefile_install install_home
 
-uninstall_home:
+uninstall_home: makefile_install
 	-make -f makefile_install uninstall_home
 
 # This makes the main newlisp-x.x.x.tgz source distribuition package

@@ -95,7 +95,7 @@ newlispdoc file.lsp                 # -> file.lsp.html
 
 Tags: `@module`, `@description`, `@syntax`, `@param`, `@return`,
 `@author`, `@version`, `@example`, `@link`. Details:
-`/usr/local/share/doc/newlisp/newLISPdoc.html`, `man newlispdoc`.
+`doc/newLISPdoc.html`.
 
 ## Linking standalone executables
 

@@ -13,13 +13,11 @@ generational GC, while remaining 100% source-compatible with classic newLISP.
 
 Authoritative sources available locally:
 
-- Full manual: `doc/newlisp_manual.html` (repo) or
-  `/usr/local/share/doc/newlisp/newlisp_manual.html` (installed)
+- Full manual: `doc/newlisp_manual.html`
 - Code patterns cookbook: `doc/CodePatterns.html`
 - VM/GC internals: `doc/ARCHITECTURE.md`
 - Runnable demos: `examples/` (see `examples/README.md`)
-- Standard modules: `modules/*.lsp` (installed to
-  `/usr/local/share/newlisp/modules/`)
+- Standard modules: `modules/*.lsp` (not installed by `make install`)
 
 ## Running code
 

@@ -64,6 +64,9 @@ or if already in superuser mode:
 
     make install
 
+make install copies only the newlisp executable to /usr/local/bin/newlisp.
+Modules, documentation, and newlispdoc are not installed.
+
 to find out all make options, use:
 
     make help

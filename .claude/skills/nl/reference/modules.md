@@ -1,7 +1,7 @@
 # newLISP Standard Library Modules
 
-21 modules ship in `modules/` (repo) and install to
-`/usr/local/share/newlisp/modules/`.
+21 modules ship in `modules/`. `make install` does not copy them;
+`(module ...)` still looks in `$NEWLISPDIR/modules/`.
 
 Load with:
 

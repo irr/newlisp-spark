@@ -87,11 +87,11 @@ make -f makefiles/dgx_spark_utf8_ffi.mk   # aarch64/ARM64 Linux (DGX Spark)
 
 ### Installation
 ```bash
-# System-wide installation (requires root privileges):
-sudo make install
+# System-wide install of the newlisp binary (requires root):
+sudo make install          # /usr/local/bin/newlisp
 
-# User home directory install (~/bin, ~/share):
-make install_home
+# User home directory install:
+make install_home          # ~/.local/bin/newlisp
 
 # Shared library flavor (newlisp.so — for embedding and callback
 # examples; separate build flavor, clean between flavors):
