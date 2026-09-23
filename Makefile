@@ -66,7 +66,7 @@ clean:
 	-chmod 755 configure configure-alt examples/*
 	-chmod 644 doc/* modules/*.lsp examples/*.lsp examples/*.html
 	-chmod 755 doc/index.cgi
-	-rm -f makefile_build makefile_install config.h test-*
+	-rm -f makefile_build makefile_install config.h test-* newlisp
 
 # run test scripts
 
@@ -84,15 +84,15 @@ check:
 	./newlisp qa/qa-specific-tests/qa-bigint 10000
 	./newlisp qa/qa-specific-tests/qa-bench
 
-# old naming for check 
-test: 
+# old naming for check
+test:
 	make check | grep '>>>'
 
 # decimal-comma locale suite (needs the de_DE.UTF-8 locale installed)
 check-comma:
 	./newlisp qa/qa-comma
 
-test-comma: 
+test-comma:
 	make check-comma | grep '>>>'
 
 checkall:
@@ -120,11 +120,11 @@ checkall:
 	./newlisp qa/qa-specific-tests/qa-factorfibo 60
 	./newlisp qa/qa-specific-tests/qa-bench
 
-testall: 
+testall:
 	make checkall | grep '>>>'
 
 # benchmark
-bench: 
+bench:
 	./newlisp qa/qa-specific-tests/qa-bench
 
 # install
@@ -191,11 +191,11 @@ version:
 	sed -i.bak -E 's/newLISP v.+ Manual/newLISP v.$(VERSION) Manual/' doc/newlisp_manual.html
 	sed -i.bak -E 's/Reference v.+<\/h2>/Reference v.$(VERSION)<\/h2>/' doc/newlisp_manual.html
 	sed -i.bak -E 's/VERSION=.+/VERSION=$(VERSION)/' configure-alt
-	sed -i.bak -E 's/VERSION=.+/VERSION=$(VERSION)/' makefiles/install.mk 
+	sed -i.bak -E 's/VERSION=.+/VERSION=$(VERSION)/' makefiles/install.mk
 
 # Prepare the manual file for PDF conversion, by replaceing all <span class="function"></span>
 # with <font color="#DD0000"></font> in the syntax statements and replacing &rarr; (one line
-# arrow with &rArr; (double line arrow). This is necessary when using OpenOffcice PDF conversion 
+# arrow with &rArr; (double line arrow). This is necessary when using OpenOffcice PDF conversion
 #
 preparepdf:
 	util/preparepdf doc/newlisp_manual.html doc/newlisp_manual_preparepdf.html
