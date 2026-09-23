@@ -17,7 +17,7 @@ Authoritative sources available locally:
 - Code patterns cookbook: `doc/CodePatterns.html`
 - VM/GC internals: `doc/ARCHITECTURE.md`
 - Runnable demos: `examples/` (see `examples/README.md`)
-- Standard modules: `modules/*.lsp` (not installed by `make install`)
+- Standard modules: `modules/*.lsp` (installed to `$NEWLISPDIR/modules/`)
 
 ## Running code
 

@@ -93,8 +93,8 @@ make                                  # auto-detect platform/arch
 make -f makefiles/linuxLP64_utf8.mk   # explicit x86_64
 make -f makefiles/dgx_spark_utf8_ffi.mk   # explicit aarch64
 
-sudo make install                     # /usr/local/bin/newlisp only
-make install_home                     # ~/.local/bin/newlisp only
+sudo make install                     # binary + modules under /usr/local
+make install_home                     # ~/.local/bin and ~/.local/share/newlisp/modules
 make clean && make -f makefiles/linuxLP64_lib.mk && sudo make install_lib
 
 make test        # == ./newlisp qa/qa-dot   (396 primitives, contexts, scoping)

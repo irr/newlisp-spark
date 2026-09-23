@@ -426,11 +426,36 @@ lc = localeconv();
 lc_decimal_point = *lc->decimal_point;
 }
 
-/* set NEWLISPDIR only if not set already */
+/* set NEWLISPDIR only if not set already.
+   Prefer the compiled-in directory when it exists, otherwise a home
+   install at ~/.local/share/newlisp (make install_home). */
 void initNewlispDir(void)
 {
-if(getenv("NEWLISPDIR") == NULL)
+char homeDir[PATH_MAX];
+char * home;
+struct stat st;
+
+if(getenv("NEWLISPDIR") != NULL)
+    return;
+
+if(stat(NEWLISPDIR, &st) == 0 && S_ISDIR(st.st_mode))
+    {
     setenv("NEWLISPDIR", NEWLISPDIR, TRUE);
+    return;
+    }
+
+home = getenv("HOME");
+if(home != NULL)
+    {
+    snprintf(homeDir, PATH_MAX, "%s/.local/share/newlisp", home);
+    if(stat(homeDir, &st) == 0 && S_ISDIR(st.st_mode))
+        {
+        setenv("NEWLISPDIR", homeDir, TRUE);
+        return;
+        }
+    }
+
+setenv("NEWLISPDIR", NEWLISPDIR, TRUE);
 }
 
 void initTempDir()

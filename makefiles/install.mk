@@ -12,15 +12,18 @@ bindir=$(prefix)/bin
 mandir=$(prefix)/share/man
 libdir=$(prefix)/lib
 
-# copies only the newlisp executable to $(bindir)
-# which has to be done as 'root' with superuser permissions
-# for an install in your home directory use make install_home
+# copies the newlisp executable and the modules directory.
+# (module ...) looks in $(datadir)/newlisp/modules, hardcoded as
+# NEWLISPDIR in newlisp.c when the environment variable is unset.
+# must be done as root; for a home install use make install_home
 
 install:
 	-install -d $(bindir)
 	-rm -f $(bindir)/newlisp
 	-rm -f $(bindir)/newlisp-$(VERSION)
 	-install -m 755 newlisp $(bindir)/newlisp
+	-install -d $(datadir)/newlisp/modules
+	-install -m 644 modules/*.lsp $(datadir)/newlisp/modules/
 
 # installs the newLISP shared library, needed for embedding and
 # callback examples; the library is a separate build flavor:
@@ -46,6 +49,8 @@ uninstall:
 install_home:
 	-install -d $(HOME)/.local/bin
 	-install -m 755 newlisp $(HOME)/.local/bin/newlisp
+	-install -d $(HOME)/.local/share/newlisp/modules
+	-install -m 644 modules/*.lsp $(HOME)/.local/share/newlisp/modules/
 
 
 uninstall_home:
@@ -53,6 +58,7 @@ uninstall_home:
 	-rm  -rf $(HOME)/share/doc/newlisp
 	-rm  $(HOME)/share/man/man1/newlisp.1
 	-rm  $(HOME)/share/man/man1/newlispdoc.1
+	-rm -rf $(HOME)/.local/share/newlisp
 	-rm $(HOME)/.local/bin/newlisp
 	-rm $(HOME)/bin/newlisp
 	-rm $(HOME)/bin/newlispdoc

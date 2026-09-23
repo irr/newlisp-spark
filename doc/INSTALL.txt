@@ -64,8 +64,10 @@ or if already in superuser mode:
 
     make install
 
-make install copies only the newlisp executable to /usr/local/bin/newlisp.
-Modules, documentation, and newlispdoc are not installed.
+make install copies the newlisp executable to /usr/local/bin/newlisp and the
+modules to /usr/local/share/newlisp/modules. Documentation and newlispdoc
+are not installed. (module ...) needs those modules; get-url lives in
+modules/curl.lsp.
 
 to find out all make options, use:
 

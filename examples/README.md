@@ -16,6 +16,7 @@ unless stated otherwise).
 | `form.cgi` | demo for HTML form CGI |
 | `form.html` | used by `form.cgi` |
 | `httpd-conf.lsp` | configuration file for newLISP httpd mode |
+| `json2md.lsp` | fetch a JSON URL or file, parse it, write Markdown |
 | `newLISP-Excel-Import.xls` | demo how to import newLISP in MS Excel |
 | `observer` | demo for forking processes |
 | `opengl-demo-ffi.lsp` | OpenGL demo for extended FFI |

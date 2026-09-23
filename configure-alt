@@ -441,6 +441,8 @@ install:
 	-rm -f \$(bindir)/newlisp
 	-rm -f \$(bindir)/\$(package)-\$(version)
 	-install -m 755 newlisp \$(bindir)/newlisp
+	-install -d \$(pkgdatadir)/modules
+	-install -m 644 modules/*.lsp \$(pkgdatadir)/modules/
 
 
 uninstall:
