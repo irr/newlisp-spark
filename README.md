@@ -186,9 +186,10 @@ make test-comma
 
 ## License & Credits
 
-- Copyright (C) 2020 Lutz Mueller
-- Copyright (C) 2026 KIM Taegyoon
 - Copyright (C) 2026 Ivan Rocha (maintainer; aarch64/DGX Spark support, VM correctness and GC safety fixes)
+- Copyright (C) 2026 KIM Taegyoon
+- Copyright (C) 2020 Lutz Mueller
+
 - **newLISP** was originally designed and implemented by **Lutz Mueller** (Nuevatec).
 - **newLISP Spark** is released under the [GNU General Public License Version 3 (GPLv3)](LICENSE). See [`LICENSE`](LICENSE) or [`doc/COPYING.txt`](doc/COPYING.txt) for the complete license text.
 - Documentation files are distributed under the GNU Free Documentation License (GFDL).
