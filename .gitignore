@@ -25,5 +25,4 @@ __pycache__/
 # Operating System & Editor Files
 *.swp
 *~
-.vscode/
 .idea/
