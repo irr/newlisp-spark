@@ -13,9 +13,27 @@ CELL * * vm_stack = NULL;
 int vm_sp = 0;
 static int vm_stack_capacity = 0;
 
+/* Shadow ownership map, parallel to vm_stack: vm_owned[i] == 1 when
+   vm_stack[i] is a temporary cell whose sole owner is the VM stack
+   slot itself (arithmetic results, argument copies).  Such cells can
+   be reclaimed with deleteList() when the slot is dropped or
+   overwritten, or their ownership transferred to a symbol/frame slot.
+   vm_owned[i] == 0 marks shared or borrowed references (nilCell,
+   trueCell, constant-table cells, symbol contents, local slots,
+   primitive results) which the VM must never free. */
+static unsigned char * vm_owned = NULL;
+
 VM_FRAME * vm_frames = NULL;
 int vm_frame_count = 0;
 static int vm_frames_capacity = 0;
+
+/* Shared immutable long cells for the literals 0, 1 and 2 (used by
+   OP_CONST_0/1/2).  Like constant-table cells they are never freed
+   and never stored into a symbol without a copy: in-place mutators
+   (inc/dec/++/--) carry SYMBOL_DESTRUCTIVE and force tree-walker
+   fallback, and structure-building primitives (list, push, ...) copy
+   their arguments via takeEvalResult(). */
+static CELL * vm_shared_long[3] = {NULL, NULL, NULL};
 
 void initBytecodeVM(void)
 {
@@ -23,6 +41,7 @@ void initBytecodeVM(void)
     {
         vm_stack_capacity = VM_INITIAL_STACK_SIZE;
         vm_stack = (CELL * *)calloc(vm_stack_capacity, sizeof(CELL *));
+        vm_owned = (unsigned char *)calloc(vm_stack_capacity, 1);
         vm_sp = 0;
     }
     if (vm_frames == NULL)
@@ -30,6 +49,14 @@ void initBytecodeVM(void)
         vm_frames_capacity = VM_INITIAL_FRAMES_SIZE;
         vm_frames = (VM_FRAME *)calloc(vm_frames_capacity, sizeof(VM_FRAME));
         vm_frame_count = 0;
+    }
+    if (vm_shared_long[0] == NULL)
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            vm_shared_long[i] = allocGen1Cell(CELL_LONG);
+            vm_shared_long[i]->contents = (UINT)i;
+        }
     }
 }
 
@@ -977,7 +1004,6 @@ static void compileExpr(Compiler * c, CELL * expr, int is_tail)
 
                         int slot = findLocal(c, sym);
                         compileExpr(c, val_expr, 0);
-                        emitOp(c, OP_DUP);
                         if (slot >= 0)
                         {
                             if (slot < 4)
@@ -987,11 +1013,22 @@ static void compileExpr(Compiler * c, CELL * expr, int is_tail)
                                 emitOp(c, OP_STORE_LOCAL);
                                 emitUint16(c, (uint16_t)slot);
                             }
+                            /* reload instead of DUP: lets the store take
+                               ownership of an owned temporary without copy */
+                            if (slot < 4)
+                                emitOp(c, (VM_OPCODE)(OP_LOAD_LOCAL_0 + slot));
+                            else
+                            {
+                                emitOp(c, OP_LOAD_LOCAL);
+                                emitUint16(c, (uint16_t)slot);
+                            }
                         }
                         else
                         {
                             uint16_t sidx = addSymbol(c, sym);
                             emitOp(c, OP_STORE_GLOBAL);
+                            emitUint16(c, sidx);
+                            emitOp(c, OP_LOAD_GLOBAL);
                             emitUint16(c, sidx);
                         }
                         if (pair != nilCell)
@@ -1039,12 +1076,20 @@ static void compileExpr(Compiler * c, CELL * expr, int is_tail)
                             emitOp(c, is_inc ? OP_ADD : OP_SUB);
                         }
 
-                        emitOp(c, OP_DUP);
+                        /* store, then reload the new value (lets the store
+                           take ownership of the arithmetic temporary) */
                         if (slot < 4)
                             emitOp(c, (VM_OPCODE)(OP_STORE_LOCAL_0 + slot));
                         else
                         {
                             emitOp(c, OP_STORE_LOCAL);
+                            emitUint16(c, (uint16_t)slot);
+                        }
+                        if (slot < 4)
+                            emitOp(c, (VM_OPCODE)(OP_LOAD_LOCAL_0 + slot));
+                        else
+                        {
+                            emitOp(c, OP_LOAD_LOCAL);
                             emitUint16(c, (uint16_t)slot);
                         }
                         return;
@@ -1063,8 +1108,9 @@ static void compileExpr(Compiler * c, CELL * expr, int is_tail)
                             compileExpr(c, delta, 0);
                             emitOp(c, is_inc ? OP_ADD : OP_SUB);
                         }
-                        emitOp(c, OP_DUP);
                         emitOp(c, OP_STORE_GLOBAL);
+                        emitUint16(c, sidx);
+                        emitOp(c, OP_LOAD_GLOBAL);
                         emitUint16(c, sidx);
                         return;
                     }
@@ -1385,8 +1431,11 @@ BYTECODE_OBJ * compileLambda(CELL * lambda, SYMBOL * selfSymbol)
 
 #define VM_CHECK_STACK(needed) do { \
     if (__builtin_expect(vm_sp + (needed) >= vm_stack_capacity, 0)) { \
+        int old_cap = vm_stack_capacity; \
         vm_stack_capacity *= 2; \
         vm_stack = (CELL * *)realloc(vm_stack, vm_stack_capacity * sizeof(CELL *)); \
+        vm_owned = (unsigned char *)realloc(vm_owned, vm_stack_capacity); \
+        memset(vm_owned + old_cap, 0, vm_stack_capacity - old_cap); \
     } \
 } while(0)
 
@@ -1402,6 +1451,35 @@ BYTECODE_OBJ * compileLambda(CELL * lambda, SYMBOL * selfSymbol)
 #else
 #define USE_COMPUTED_GOTO 0
 #endif
+
+/* Reclaim an owned temporary; borrowed/shared cells pass through. */
+#define VM_FREE_OWNED(cellPtr, ownFlag) do { \
+    if ((ownFlag)) deleteList(cellPtr); \
+} while (0)
+
+/* True when 'cell' is still referenced from the stack region
+   [from, to) — used to keep owned frame-slot values alive while they
+   are simultaneously passed as (reference) arguments into a call. */
+static int vmReferencedOnStack(CELL * cell, int from, int to)
+{
+    for (int j = from; j < to; j++)
+        if (vm_stack[j] == cell) return 1;
+    return 0;
+}
+
+/* Reclaim owned values in stack slots [from, to), except cells that
+   are still referenced inside [keepFrom, keepTo). */
+static void vmFreeOwnedRange(int from, int to, int keepFrom, int keepTo)
+{
+    for (int i = from; i < to; i++)
+    {
+        if (vm_owned[i] && !vmReferencedOnStack(vm_stack[i], keepFrom, keepTo))
+        {
+            deleteList(vm_stack[i]);
+            vm_owned[i] = 0;
+        }
+    }
+}
 
 CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 {
@@ -1431,7 +1509,9 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
             evaluated = takeEvalResult(evalResult, floor);
         }
         VM_CHECK_STACK(1);
-        vm_stack[vm_sp++] = evaluated;
+        vm_stack[vm_sp] = evaluated;
+        vm_owned[vm_sp] = 1; /* copyCellDeep/takeEvalResult: sole-owned */
+        vm_sp++;
         argc++;
         args = args->next;
     }
@@ -1445,12 +1525,14 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
     {
         VM_CHECK_STACK(1);
         vm_stack[vm_sp++] = nilCell;
+        vm_owned[vm_sp - 1] = 0;
         argc++;
     }
     while (vm_sp < start_sp + bc->num_locals)
     {
         VM_CHECK_STACK(1);
         vm_stack[vm_sp++] = nilCell;
+        vm_owned[vm_sp - 1] = 0;
     }
 
     int base_frame = vm_frame_count;
@@ -1543,6 +1625,7 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
                 VM_CHECK_STACK(1);
                 vm_stack[vm_sp++] = nilCell;
+                vm_owned[vm_sp - 1] = 0;
                 DISPATCH();
 
 #if USE_COMPUTED_GOTO
@@ -1552,6 +1635,7 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
                 VM_CHECK_STACK(1);
                 vm_stack[vm_sp++] = trueCell;
+                vm_owned[vm_sp - 1] = 0;
                 DISPATCH();
 
 #if USE_COMPUTED_GOTO
@@ -1564,6 +1648,7 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
                 ip += 2;
                 VM_CHECK_STACK(1);
                 vm_stack[vm_sp++] = current_bc->constants[idx];
+                vm_owned[vm_sp - 1] = 0;
                 DISPATCH();
             }
 
@@ -1573,7 +1658,8 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
             case OP_CONST_0:
 #endif
                 VM_CHECK_STACK(1);
-                vm_stack[vm_sp++] = stuffInteger(0);
+                vm_stack[vm_sp++] = vm_shared_long[0];
+                vm_owned[vm_sp - 1] = 0;
                 DISPATCH();
 
 #if USE_COMPUTED_GOTO
@@ -1582,7 +1668,8 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
             case OP_CONST_1:
 #endif
                 VM_CHECK_STACK(1);
-                vm_stack[vm_sp++] = stuffInteger(1);
+                vm_stack[vm_sp++] = vm_shared_long[1];
+                vm_owned[vm_sp - 1] = 0;
                 DISPATCH();
 
 #if USE_COMPUTED_GOTO
@@ -1591,7 +1678,8 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
             case OP_CONST_2:
 #endif
                 VM_CHECK_STACK(1);
-                vm_stack[vm_sp++] = stuffInteger(2);
+                vm_stack[vm_sp++] = vm_shared_long[2];
+                vm_owned[vm_sp - 1] = 0;
                 DISPATCH();
 
 #if USE_COMPUTED_GOTO
@@ -1600,6 +1688,7 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
             case OP_POP:
 #endif
                 --vm_sp;
+                VM_FREE_OWNED(vm_stack[vm_sp], vm_owned[vm_sp]);
                 DISPATCH();
 
 #if USE_COMPUTED_GOTO
@@ -1610,7 +1699,9 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
             {
                 CELL * c = vm_stack[vm_sp - 1];
                 VM_CHECK_STACK(1);
-                vm_stack[vm_sp++] = c;
+                vm_stack[vm_sp] = c;
+                vm_owned[vm_sp] = 0; /* duplicate is a plain reference */
+                vm_sp++;
                 DISPATCH();
             }
 
@@ -1623,7 +1714,9 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
                 uint16_t slot = (uint16_t)(ip[0] | (ip[1] << 8));
                 ip += 2;
                 VM_CHECK_STACK(1);
-                vm_stack[vm_sp++] = vm_stack[fp + slot];
+                vm_stack[vm_sp] = vm_stack[fp + slot];
+                vm_owned[vm_sp] = 0;
+                vm_sp++;
                 DISPATCH();
             }
 
@@ -1633,7 +1726,9 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
             case OP_LOAD_LOCAL_0:
 #endif
                 VM_CHECK_STACK(1);
-                vm_stack[vm_sp++] = vm_stack[fp + 0];
+                vm_stack[vm_sp] = vm_stack[fp + 0];
+                vm_owned[vm_sp] = 0;
+                vm_sp++;
                 DISPATCH();
 
 #if USE_COMPUTED_GOTO
@@ -1642,7 +1737,9 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
             case OP_LOAD_LOCAL_1:
 #endif
                 VM_CHECK_STACK(1);
-                vm_stack[vm_sp++] = vm_stack[fp + 1];
+                vm_stack[vm_sp] = vm_stack[fp + 1];
+                vm_owned[vm_sp] = 0;
+                vm_sp++;
                 DISPATCH();
 
 #if USE_COMPUTED_GOTO
@@ -1651,7 +1748,9 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
             case OP_LOAD_LOCAL_2:
 #endif
                 VM_CHECK_STACK(1);
-                vm_stack[vm_sp++] = vm_stack[fp + 2];
+                vm_stack[vm_sp] = vm_stack[fp + 2];
+                vm_owned[vm_sp] = 0;
+                vm_sp++;
                 DISPATCH();
 
 #if USE_COMPUTED_GOTO
@@ -1660,7 +1759,9 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
             case OP_LOAD_LOCAL_3:
 #endif
                 VM_CHECK_STACK(1);
-                vm_stack[vm_sp++] = vm_stack[fp + 3];
+                vm_stack[vm_sp] = vm_stack[fp + 3];
+                vm_owned[vm_sp] = 0;
+                vm_sp++;
                 DISPATCH();
 
 #if USE_COMPUTED_GOTO
@@ -1671,7 +1772,13 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
             {
                 uint16_t slot = (uint16_t)(ip[0] | (ip[1] << 8));
                 ip += 2;
-                vm_stack[fp + slot] = vm_stack[--vm_sp];
+                CELL * val = vm_stack[--vm_sp];
+                unsigned char vown = vm_owned[vm_sp];
+                CELL * old = vm_stack[fp + slot];
+                if (vm_owned[fp + slot] && old != val)
+                    deleteList(old);
+                vm_stack[fp + slot] = val;
+                vm_owned[fp + slot] = vown;
                 DISPATCH();
             }
 
@@ -1680,32 +1787,64 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #else
             case OP_STORE_LOCAL_0:
 #endif
-                vm_stack[fp + 0] = vm_stack[--vm_sp];
+            {
+                CELL * val = vm_stack[--vm_sp];
+                unsigned char vown = vm_owned[vm_sp];
+                CELL * old = vm_stack[fp + 0];
+                if (vm_owned[fp + 0] && old != val)
+                    deleteList(old);
+                vm_stack[fp + 0] = val;
+                vm_owned[fp + 0] = vown;
                 DISPATCH();
+            }
 
 #if USE_COMPUTED_GOTO
             DO_OP_STORE_LOCAL_1:
 #else
             case OP_STORE_LOCAL_1:
 #endif
-                vm_stack[fp + 1] = vm_stack[--vm_sp];
+            {
+                CELL * val = vm_stack[--vm_sp];
+                unsigned char vown = vm_owned[vm_sp];
+                CELL * old = vm_stack[fp + 1];
+                if (vm_owned[fp + 1] && old != val)
+                    deleteList(old);
+                vm_stack[fp + 1] = val;
+                vm_owned[fp + 1] = vown;
                 DISPATCH();
+            }
 
 #if USE_COMPUTED_GOTO
             DO_OP_STORE_LOCAL_2:
 #else
             case OP_STORE_LOCAL_2:
 #endif
-                vm_stack[fp + 2] = vm_stack[--vm_sp];
+            {
+                CELL * val = vm_stack[--vm_sp];
+                unsigned char vown = vm_owned[vm_sp];
+                CELL * old = vm_stack[fp + 2];
+                if (vm_owned[fp + 2] && old != val)
+                    deleteList(old);
+                vm_stack[fp + 2] = val;
+                vm_owned[fp + 2] = vown;
                 DISPATCH();
+            }
 
 #if USE_COMPUTED_GOTO
             DO_OP_STORE_LOCAL_3:
 #else
             case OP_STORE_LOCAL_3:
 #endif
-                vm_stack[fp + 3] = vm_stack[--vm_sp];
+            {
+                CELL * val = vm_stack[--vm_sp];
+                unsigned char vown = vm_owned[vm_sp];
+                CELL * old = vm_stack[fp + 3];
+                if (vm_owned[fp + 3] && old != val)
+                    deleteList(old);
+                vm_stack[fp + 3] = val;
+                vm_owned[fp + 3] = vown;
                 DISPATCH();
+            }
 
 #if USE_COMPUTED_GOTO
             DO_OP_LOAD_GLOBAL:
@@ -1717,7 +1856,9 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
                 ip += 2;
                 SYMBOL * s = current_bc->symbols[idx];
                 VM_CHECK_STACK(1);
-                vm_stack[vm_sp++] = (CELL *)s->contents;
+                vm_stack[vm_sp] = (CELL *)s->contents;
+                vm_owned[vm_sp] = 0;
+                vm_sp++;
                 DISPATCH();
             }
 
@@ -1731,7 +1872,10 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
                 ip += 2;
                 SYMBOL * s = current_bc->symbols[idx];
                 CELL * val = vm_stack[--vm_sp];
-                CELL * c = copyCell(val);
+                unsigned char vown = vm_owned[vm_sp];
+                /* An owned temporary is sole-owned by the stack slot:
+                   transfer it to the symbol instead of copying. */
+                CELL * c = vown ? val : copyCell(val);
                 c = gcEvacuate(c);
                 deleteList((CELL *)s->contents);
                 s->contents = (UINT)c;
@@ -1744,7 +1888,9 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
             case OP_LOAD_SELF:
 #endif
                 VM_CHECK_STACK(1);
-                vm_stack[vm_sp++] = current_self;
+                vm_stack[vm_sp] = current_self;
+                vm_owned[vm_sp] = 0;
+                vm_sp++;
                 DISPATCH();
 
 #if USE_COMPUTED_GOTO
@@ -1766,7 +1912,9 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
             {
                 int16_t offset = (int16_t)(ip[0] | (ip[1] << 8));
                 ip += 2;
-                CELL * cond = vm_stack[--vm_sp];
+                --vm_sp;
+                CELL * cond = vm_stack[vm_sp];
+                VM_FREE_OWNED(cond, vm_owned[vm_sp]);
                 if (cond == nilCell || isNil(cond) || isEmpty(cond))
                 {
                     ip += offset;
@@ -1782,7 +1930,9 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
             {
                 int16_t offset = (int16_t)(ip[0] | (ip[1] << 8));
                 ip += 2;
-                CELL * cond = vm_stack[--vm_sp];
+                --vm_sp;
+                CELL * cond = vm_stack[vm_sp];
+                VM_FREE_OWNED(cond, vm_owned[vm_sp]);
                 if (cond != nilCell && !isNil(cond) && !isEmpty(cond))
                 {
                     ip += offset;
@@ -1797,15 +1947,20 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
             {
                 CELL * b = vm_stack[--vm_sp];
+                unsigned char bown = vm_owned[vm_sp];
                 CELL * a = vm_stack[--vm_sp];
+                unsigned char aown = vm_owned[vm_sp];
+                int cmpResult;
                 if (a->type == CELL_LONG && b->type == CELL_LONG)
-                {
-                    vm_stack[vm_sp++] = ((INT)a->contents < (INT)b->contents) ? trueCell : nilCell;
-                }
+                    cmpResult = ((INT)a->contents < (INT)b->contents);
                 else
-                {
-                    vm_stack[vm_sp++] = (compareCells(a, b) < 0) ? trueCell : nilCell;
-                }
+                    cmpResult = (compareCells(a, b) < 0);
+                VM_FREE_OWNED(a, aown);
+                VM_FREE_OWNED(b, bown);
+                VM_CHECK_STACK(1);
+                vm_stack[vm_sp] = cmpResult ? trueCell : nilCell;
+                vm_owned[vm_sp] = 0;
+                vm_sp++;
                 DISPATCH();
             }
 
@@ -1816,15 +1971,20 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
             {
                 CELL * b = vm_stack[--vm_sp];
+                unsigned char bown = vm_owned[vm_sp];
                 CELL * a = vm_stack[--vm_sp];
+                unsigned char aown = vm_owned[vm_sp];
+                int cmpResult;
                 if (a->type == CELL_LONG && b->type == CELL_LONG)
-                {
-                    vm_stack[vm_sp++] = ((INT)a->contents <= (INT)b->contents) ? trueCell : nilCell;
-                }
+                    cmpResult = ((INT)a->contents <= (INT)b->contents);
                 else
-                {
-                    vm_stack[vm_sp++] = (compareCells(a, b) <= 0) ? trueCell : nilCell;
-                }
+                    cmpResult = (compareCells(a, b) <= 0);
+                VM_FREE_OWNED(a, aown);
+                VM_FREE_OWNED(b, bown);
+                VM_CHECK_STACK(1);
+                vm_stack[vm_sp] = cmpResult ? trueCell : nilCell;
+                vm_owned[vm_sp] = 0;
+                vm_sp++;
                 DISPATCH();
             }
 
@@ -1835,15 +1995,20 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
             {
                 CELL * b = vm_stack[--vm_sp];
+                unsigned char bown = vm_owned[vm_sp];
                 CELL * a = vm_stack[--vm_sp];
+                unsigned char aown = vm_owned[vm_sp];
+                int cmpResult;
                 if (a->type == CELL_LONG && b->type == CELL_LONG)
-                {
-                    vm_stack[vm_sp++] = ((INT)a->contents > (INT)b->contents) ? trueCell : nilCell;
-                }
+                    cmpResult = ((INT)a->contents > (INT)b->contents);
                 else
-                {
-                    vm_stack[vm_sp++] = (compareCells(a, b) > 0) ? trueCell : nilCell;
-                }
+                    cmpResult = (compareCells(a, b) > 0);
+                VM_FREE_OWNED(a, aown);
+                VM_FREE_OWNED(b, bown);
+                VM_CHECK_STACK(1);
+                vm_stack[vm_sp] = cmpResult ? trueCell : nilCell;
+                vm_owned[vm_sp] = 0;
+                vm_sp++;
                 DISPATCH();
             }
 
@@ -1854,15 +2019,20 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
             {
                 CELL * b = vm_stack[--vm_sp];
+                unsigned char bown = vm_owned[vm_sp];
                 CELL * a = vm_stack[--vm_sp];
+                unsigned char aown = vm_owned[vm_sp];
+                int cmpResult;
                 if (a->type == CELL_LONG && b->type == CELL_LONG)
-                {
-                    vm_stack[vm_sp++] = ((INT)a->contents >= (INT)b->contents) ? trueCell : nilCell;
-                }
+                    cmpResult = ((INT)a->contents >= (INT)b->contents);
                 else
-                {
-                    vm_stack[vm_sp++] = (compareCells(a, b) >= 0) ? trueCell : nilCell;
-                }
+                    cmpResult = (compareCells(a, b) >= 0);
+                VM_FREE_OWNED(a, aown);
+                VM_FREE_OWNED(b, bown);
+                VM_CHECK_STACK(1);
+                vm_stack[vm_sp] = cmpResult ? trueCell : nilCell;
+                vm_owned[vm_sp] = 0;
+                vm_sp++;
                 DISPATCH();
             }
 
@@ -1873,15 +2043,20 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
             {
                 CELL * b = vm_stack[--vm_sp];
+                unsigned char bown = vm_owned[vm_sp];
                 CELL * a = vm_stack[--vm_sp];
+                unsigned char aown = vm_owned[vm_sp];
+                int cmpResult;
                 if (a->type == CELL_LONG && b->type == CELL_LONG)
-                {
-                    vm_stack[vm_sp++] = ((INT)a->contents == (INT)b->contents) ? trueCell : nilCell;
-                }
+                    cmpResult = ((INT)a->contents == (INT)b->contents);
                 else
-                {
-                    vm_stack[vm_sp++] = (compareCells(a, b) == 0) ? trueCell : nilCell;
-                }
+                    cmpResult = (compareCells(a, b) == 0);
+                VM_FREE_OWNED(a, aown);
+                VM_FREE_OWNED(b, bown);
+                VM_CHECK_STACK(1);
+                vm_stack[vm_sp] = cmpResult ? trueCell : nilCell;
+                vm_owned[vm_sp] = 0;
+                vm_sp++;
                 DISPATCH();
             }
 
@@ -1892,15 +2067,20 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
             {
                 CELL * b = vm_stack[--vm_sp];
+                unsigned char bown = vm_owned[vm_sp];
                 CELL * a = vm_stack[--vm_sp];
+                unsigned char aown = vm_owned[vm_sp];
+                int cmpResult;
                 if (a->type == CELL_LONG && b->type == CELL_LONG)
-                {
-                    vm_stack[vm_sp++] = ((INT)a->contents != (INT)b->contents) ? trueCell : nilCell;
-                }
+                    cmpResult = ((INT)a->contents != (INT)b->contents);
                 else
-                {
-                    vm_stack[vm_sp++] = (compareCells(a, b) != 0) ? trueCell : nilCell;
-                }
+                    cmpResult = (compareCells(a, b) != 0);
+                VM_FREE_OWNED(a, aown);
+                VM_FREE_OWNED(b, bown);
+                VM_CHECK_STACK(1);
+                vm_stack[vm_sp] = cmpResult ? trueCell : nilCell;
+                vm_owned[vm_sp] = 0;
+                vm_sp++;
                 DISPATCH();
             }
 
@@ -1911,17 +2091,32 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
             {
                 CELL * b = vm_stack[--vm_sp];
+                unsigned char bown = vm_owned[vm_sp];
                 CELL * a = vm_stack[--vm_sp];
+                unsigned char aown = vm_owned[vm_sp];
+                CELL * res;
                 if (a->type == CELL_LONG && b->type == CELL_LONG)
                 {
-                    vm_stack[vm_sp++] = stuffInteger((INT)a->contents + (INT)b->contents);
+                    res = stuffInteger((INT)a->contents + (INT)b->contents);
+                    VM_FREE_OWNED(a, aown);
+                    VM_FREE_OWNED(b, bown);
+                    VM_CHECK_STACK(1);
+                    vm_stack[vm_sp] = res;
+                    vm_owned[vm_sp] = 1;
+                    vm_sp++;
                 }
                 else
                 {
                     CELL dummyA, dummyB;
                     dummyA.type = a->type; dummyA.contents = a->contents; dummyA.aux = a->aux; dummyA.next = &dummyB;
                     dummyB.type = b->type; dummyB.contents = b->contents; dummyB.aux = b->aux; dummyB.next = nilCell;
-                    vm_stack[vm_sp++] = p_add(&dummyA);
+                    res = p_add(&dummyA);
+                    VM_FREE_OWNED(a, aown);
+                    VM_FREE_OWNED(b, bown);
+                    VM_CHECK_STACK(1);
+                    vm_stack[vm_sp] = res;
+                    vm_owned[vm_sp] = 0;
+                    vm_sp++;
                 }
                 DISPATCH();
             }
@@ -1933,9 +2128,13 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
             {
                 CELL * a = vm_stack[vm_sp - 1];
+                CELL * res;
                 if (__builtin_expect(a->type == CELL_LONG, 1))
                 {
-                    vm_stack[vm_sp - 1] = stuffInteger((INT)a->contents + 1);
+                    res = stuffInteger((INT)a->contents + 1);
+                    VM_FREE_OWNED(a, vm_owned[vm_sp - 1]);
+                    vm_stack[vm_sp - 1] = res;
+                    vm_owned[vm_sp - 1] = 1;
                 }
                 else
                 {
@@ -1943,7 +2142,10 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
                     dummyB.type = CELL_LONG; dummyB.contents = 1; dummyB.aux = (UINT)nilCell; dummyB.next = nilCell;
                     CELL dummyA;
                     dummyA.type = a->type; dummyA.contents = a->contents; dummyA.aux = a->aux; dummyA.next = &dummyB;
-                    vm_stack[vm_sp - 1] = p_add(&dummyA);
+                    res = p_add(&dummyA);
+                    VM_FREE_OWNED(a, vm_owned[vm_sp - 1]);
+                    vm_stack[vm_sp - 1] = res;
+                    vm_owned[vm_sp - 1] = 0;
                 }
                 DISPATCH();
             }
@@ -1955,17 +2157,32 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
             {
                 CELL * b = vm_stack[--vm_sp];
+                unsigned char bown = vm_owned[vm_sp];
                 CELL * a = vm_stack[--vm_sp];
+                unsigned char aown = vm_owned[vm_sp];
+                CELL * res;
                 if (a->type == CELL_LONG && b->type == CELL_LONG)
                 {
-                    vm_stack[vm_sp++] = stuffInteger((INT)a->contents - (INT)b->contents);
+                    res = stuffInteger((INT)a->contents - (INT)b->contents);
+                    VM_FREE_OWNED(a, aown);
+                    VM_FREE_OWNED(b, bown);
+                    VM_CHECK_STACK(1);
+                    vm_stack[vm_sp] = res;
+                    vm_owned[vm_sp] = 1;
+                    vm_sp++;
                 }
                 else
                 {
                     CELL dummyA, dummyB;
                     dummyA.type = a->type; dummyA.contents = a->contents; dummyA.aux = a->aux; dummyA.next = &dummyB;
                     dummyB.type = b->type; dummyB.contents = b->contents; dummyB.aux = b->aux; dummyB.next = nilCell;
-                    vm_stack[vm_sp++] = p_subtract(&dummyA);
+                    res = p_subtract(&dummyA);
+                    VM_FREE_OWNED(a, aown);
+                    VM_FREE_OWNED(b, bown);
+                    VM_CHECK_STACK(1);
+                    vm_stack[vm_sp] = res;
+                    vm_owned[vm_sp] = 0;
+                    vm_sp++;
                 }
                 DISPATCH();
             }
@@ -1977,9 +2194,13 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
             {
                 CELL * a = vm_stack[vm_sp - 1];
+                CELL * res;
                 if (__builtin_expect(a->type == CELL_LONG, 1))
                 {
-                    vm_stack[vm_sp - 1] = stuffInteger((INT)a->contents - 1);
+                    res = stuffInteger((INT)a->contents - 1);
+                    VM_FREE_OWNED(a, vm_owned[vm_sp - 1]);
+                    vm_stack[vm_sp - 1] = res;
+                    vm_owned[vm_sp - 1] = 1;
                 }
                 else
                 {
@@ -1987,7 +2208,10 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
                     dummyB.type = CELL_LONG; dummyB.contents = 1; dummyB.aux = (UINT)nilCell; dummyB.next = nilCell;
                     CELL dummyA;
                     dummyA.type = a->type; dummyA.contents = a->contents; dummyA.aux = a->aux; dummyA.next = &dummyB;
-                    vm_stack[vm_sp - 1] = p_subtract(&dummyA);
+                    res = p_subtract(&dummyA);
+                    VM_FREE_OWNED(a, vm_owned[vm_sp - 1]);
+                    vm_stack[vm_sp - 1] = res;
+                    vm_owned[vm_sp - 1] = 0;
                 }
                 DISPATCH();
             }
@@ -1999,9 +2223,13 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
             {
                 CELL * a = vm_stack[vm_sp - 1];
+                CELL * res;
                 if (__builtin_expect(a->type == CELL_LONG, 1))
                 {
-                    vm_stack[vm_sp - 1] = stuffInteger((INT)a->contents - 2);
+                    res = stuffInteger((INT)a->contents - 2);
+                    VM_FREE_OWNED(a, vm_owned[vm_sp - 1]);
+                    vm_stack[vm_sp - 1] = res;
+                    vm_owned[vm_sp - 1] = 1;
                 }
                 else
                 {
@@ -2009,7 +2237,10 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
                     dummyB.type = CELL_LONG; dummyB.contents = 2; dummyB.aux = (UINT)nilCell; dummyB.next = nilCell;
                     CELL dummyA;
                     dummyA.type = a->type; dummyA.contents = a->contents; dummyA.aux = a->aux; dummyA.next = &dummyB;
-                    vm_stack[vm_sp - 1] = p_subtract(&dummyA);
+                    res = p_subtract(&dummyA);
+                    VM_FREE_OWNED(a, vm_owned[vm_sp - 1]);
+                    vm_stack[vm_sp - 1] = res;
+                    vm_owned[vm_sp - 1] = 0;
                 }
                 DISPATCH();
             }
@@ -2021,17 +2252,32 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
             {
                 CELL * b = vm_stack[--vm_sp];
+                unsigned char bown = vm_owned[vm_sp];
                 CELL * a = vm_stack[--vm_sp];
+                unsigned char aown = vm_owned[vm_sp];
+                CELL * res;
                 if (a->type == CELL_LONG && b->type == CELL_LONG)
                 {
-                    vm_stack[vm_sp++] = stuffInteger((INT)a->contents * (INT)b->contents);
+                    res = stuffInteger((INT)a->contents * (INT)b->contents);
+                    VM_FREE_OWNED(a, aown);
+                    VM_FREE_OWNED(b, bown);
+                    VM_CHECK_STACK(1);
+                    vm_stack[vm_sp] = res;
+                    vm_owned[vm_sp] = 1;
+                    vm_sp++;
                 }
                 else
                 {
                     CELL dummyA, dummyB;
                     dummyA.type = a->type; dummyA.contents = a->contents; dummyA.aux = a->aux; dummyA.next = &dummyB;
                     dummyB.type = b->type; dummyB.contents = b->contents; dummyB.aux = b->aux; dummyB.next = nilCell;
-                    vm_stack[vm_sp++] = p_multiply(&dummyA);
+                    res = p_multiply(&dummyA);
+                    VM_FREE_OWNED(a, aown);
+                    VM_FREE_OWNED(b, bown);
+                    VM_CHECK_STACK(1);
+                    vm_stack[vm_sp] = res;
+                    vm_owned[vm_sp] = 0;
+                    vm_sp++;
                 }
                 DISPATCH();
             }
@@ -2043,19 +2289,34 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
             {
                 CELL * b = vm_stack[--vm_sp];
+                unsigned char bown = vm_owned[vm_sp];
                 CELL * a = vm_stack[--vm_sp];
+                unsigned char aown = vm_owned[vm_sp];
+                CELL * res;
                 if (a->type == CELL_LONG && b->type == CELL_LONG)
                 {
                     if ((INT)b->contents == 0)
                         return errorProc(ERR_MATH);
-                    vm_stack[vm_sp++] = stuffInteger((INT)a->contents / (INT)b->contents);
+                    res = stuffInteger((INT)a->contents / (INT)b->contents);
+                    VM_FREE_OWNED(a, aown);
+                    VM_FREE_OWNED(b, bown);
+                    VM_CHECK_STACK(1);
+                    vm_stack[vm_sp] = res;
+                    vm_owned[vm_sp] = 1;
+                    vm_sp++;
                 }
                 else
                 {
                     CELL dummyA, dummyB;
                     dummyA.type = a->type; dummyA.contents = a->contents; dummyA.aux = a->aux; dummyA.next = &dummyB;
                     dummyB.type = b->type; dummyB.contents = b->contents; dummyB.aux = b->aux; dummyB.next = nilCell;
-                    vm_stack[vm_sp++] = p_divide(&dummyA);
+                    res = p_divide(&dummyA);
+                    VM_FREE_OWNED(a, aown);
+                    VM_FREE_OWNED(b, bown);
+                    VM_CHECK_STACK(1);
+                    vm_stack[vm_sp] = res;
+                    vm_owned[vm_sp] = 0;
+                    vm_sp++;
                 }
                 DISPATCH();
             }
@@ -2067,19 +2328,34 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
             {
                 CELL * b = vm_stack[--vm_sp];
+                unsigned char bown = vm_owned[vm_sp];
                 CELL * a = vm_stack[--vm_sp];
+                unsigned char aown = vm_owned[vm_sp];
+                CELL * res;
                 if (a->type == CELL_LONG && b->type == CELL_LONG)
                 {
                     if ((INT)b->contents == 0)
                         return errorProc(ERR_MATH);
-                    vm_stack[vm_sp++] = stuffInteger((INT)a->contents % (INT)b->contents);
+                    res = stuffInteger((INT)a->contents % (INT)b->contents);
+                    VM_FREE_OWNED(a, aown);
+                    VM_FREE_OWNED(b, bown);
+                    VM_CHECK_STACK(1);
+                    vm_stack[vm_sp] = res;
+                    vm_owned[vm_sp] = 1;
+                    vm_sp++;
                 }
                 else
                 {
                     CELL dummyA, dummyB;
                     dummyA.type = a->type; dummyA.contents = a->contents; dummyA.aux = a->aux; dummyA.next = &dummyB;
                     dummyB.type = b->type; dummyB.contents = b->contents; dummyB.aux = b->aux; dummyB.next = nilCell;
-                    vm_stack[vm_sp++] = p_modulo(&dummyA);
+                    res = p_modulo(&dummyA);
+                    VM_FREE_OWNED(a, aown);
+                    VM_FREE_OWNED(b, bown);
+                    VM_CHECK_STACK(1);
+                    vm_stack[vm_sp] = res;
+                    vm_owned[vm_sp] = 0;
+                    vm_sp++;
                 }
                 DISPATCH();
             }
@@ -2091,15 +2367,22 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 #endif
             {
                 CELL * a = vm_stack[vm_sp - 1];
+                CELL * res;
                 if (a->type == CELL_LONG)
                 {
-                    vm_stack[vm_sp - 1] = stuffInteger(-(INT)a->contents);
+                    res = stuffInteger(-(INT)a->contents);
+                    VM_FREE_OWNED(a, vm_owned[vm_sp - 1]);
+                    vm_stack[vm_sp - 1] = res;
+                    vm_owned[vm_sp - 1] = 1;
                 }
                 else
                 {
                     CELL dummy;
                     dummy.type = a->type; dummy.contents = a->contents; dummy.aux = a->aux; dummy.next = nilCell;
-                    vm_stack[vm_sp - 1] = p_subtract(&dummy);
+                    res = p_subtract(&dummy);
+                    VM_FREE_OWNED(a, vm_owned[vm_sp - 1]);
+                    vm_stack[vm_sp - 1] = res;
+                    vm_owned[vm_sp - 1] = 0;
                 }
                 DISPATCH();
             }
@@ -2115,6 +2398,7 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
                 {
                     VM_CHECK_STACK(1);
                     vm_stack[vm_sp++] = nilCell;
+                    vm_owned[vm_sp - 1] = 0;
                     call_argc++;
                 }
                 int new_fp = vm_sp - call_argc;
@@ -2122,6 +2406,7 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
                 {
                     VM_CHECK_STACK(1);
                     vm_stack[vm_sp++] = nilCell;
+                    vm_owned[vm_sp - 1] = 0;
                 }
                 vm_frames[vm_frame_count - 1].ip = ip;
                 VM_CHECK_FRAMES();
@@ -2147,18 +2432,26 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
             {
                 uint8_t call_argc = *ip++;
                 int new_args_start = vm_sp - call_argc;
+                /* Reclaim owned old slot values, except those that are
+                   still referenced by the incoming arguments (an argument
+                   may be a LOAD_LOCAL reference into the current frame). */
+                vmFreeOwnedRange(fp, fp + current_bc->num_locals,
+                                 new_args_start, vm_sp);
                 if (new_args_start != fp)
                 {
                     memmove(&vm_stack[fp], &vm_stack[new_args_start], call_argc * sizeof(CELL *));
+                    memmove(&vm_owned[fp], &vm_owned[new_args_start], call_argc);
                 }
                 for (int i = call_argc; i < current_bc->num_params; i++)
                 {
                     vm_stack[fp + i] = nilCell;
+                    vm_owned[fp + i] = 0;
                 }
                 int start_reset = (call_argc > current_bc->num_params) ? call_argc : current_bc->num_params;
                 for (int i = start_reset; i < current_bc->num_locals; i++)
                 {
                     vm_stack[fp + i] = nilCell;
+                    vm_owned[fp + i] = 0;
                 }
                 int frame_slots = (call_argc > current_bc->num_locals) ? call_argc : current_bc->num_locals;
                 vm_sp = fp + frame_slots;
@@ -2194,18 +2487,21 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
                         for (int i = 0; i < call_argc; i++)
                         {
                             vm_stack[fn_idx + i] = vm_stack[fn_idx + 1 + i];
+                            vm_owned[fn_idx + i] = vm_owned[fn_idx + 1 + i];
                         }
                         --vm_sp;
                         while (call_argc < target_bc->num_params)
                         {
                             VM_CHECK_STACK(1);
                             vm_stack[vm_sp++] = nilCell;
+                            vm_owned[vm_sp - 1] = 0;
                             call_argc++;
                         }
                         while (vm_sp < fn_idx + target_bc->num_locals)
                         {
                             VM_CHECK_STACK(1);
                             vm_stack[vm_sp++] = nilCell;
+                            vm_owned[vm_sp - 1] = 0;
                         }
                         vm_frames[vm_frame_count - 1].ip = ip;
                         VM_CHECK_FRAMES();
@@ -2304,9 +2600,23 @@ CALL_DISPATCH_DONE:
                 }
                 deleteList(argList);
 
+                /* Reclaim owned argument temporaries (the primitive has
+                   finished with them; results never alias owned args
+                   because structure builders copy per ORO discipline). */
+                for (int j = fn_idx + 1; j < vm_sp; j++)
+                {
+                    if (vm_owned[j])
+                    {
+                        deleteList(vm_stack[j]);
+                        vm_owned[j] = 0;
+                    }
+                }
+
                 vm_sp = fn_idx;
                 VM_CHECK_STACK(1);
-                vm_stack[vm_sp++] = res;
+                vm_stack[vm_sp] = res;
+                vm_owned[vm_sp] = 0;
+                vm_sp++;
                 DISPATCH();
             }
 
@@ -2335,18 +2645,28 @@ CALL_DISPATCH_DONE:
                     {
                         int frame_slots = (call_argc > target_bc->num_locals) ? call_argc : target_bc->num_locals;
                         while (__builtin_expect(fp + frame_slots >= vm_stack_capacity, 0)) {
+                            int old_cap = vm_stack_capacity;
                             vm_stack_capacity *= 2;
                             vm_stack = (CELL * *)realloc(vm_stack, vm_stack_capacity * sizeof(CELL *));
+                            vm_owned = (unsigned char *)realloc(vm_owned, vm_stack_capacity);
+                            memset(vm_owned + old_cap, 0, vm_stack_capacity - old_cap);
                         }
+                        /* Reclaim owned old frame slots, except values still
+                           referenced by the incoming arguments. */
+                        vmFreeOwnedRange(fp, fp + current_bc->num_locals,
+                                         fn_idx + 1, vm_sp);
                         memmove(&vm_stack[fp], &vm_stack[fn_idx + 1], call_argc * sizeof(CELL *));
+                        memmove(&vm_owned[fp], &vm_owned[fn_idx + 1], call_argc);
                         for (int i = call_argc; i < target_bc->num_params; i++)
                         {
                             vm_stack[fp + i] = nilCell;
+                            vm_owned[fp + i] = 0;
                         }
                         int start_reset = (call_argc > target_bc->num_params) ? call_argc : target_bc->num_params;
                         for (int i = start_reset; i < target_bc->num_locals; i++)
                         {
                             vm_stack[fp + i] = nilCell;
+                            vm_owned[fp + i] = 0;
                         }
                         vm_sp = fp + frame_slots;
                         /* FOOP: mirror evaluateLambda() so (self) sees the colon object */
@@ -2443,6 +2763,19 @@ TAIL_CALL_DISPATCH_DONE:
                 }
                 deleteList(argList);
 
+                /* The tail call replaces the current frame: reclaim
+                   its owned slot values (except those referenced by the
+                   arguments) and the owned argument temporaries. */
+                vmFreeOwnedRange(fp, vm_sp, fn_idx + 1, vm_sp);
+                for (int j = fn_idx + 1; j < vm_sp; j++)
+                {
+                    if (vm_owned[j])
+                    {
+                        deleteList(vm_stack[j]);
+                        vm_owned[j] = 0;
+                    }
+                }
+
                 --vm_frame_count;
                 if (vm_frame_count == base_frame)
                 {
@@ -2456,7 +2789,9 @@ TAIL_CALL_DISPATCH_DONE:
                 VM_FRAME * caller = &vm_frames[vm_frame_count - 1];
                 vm_sp = fp;
                 VM_CHECK_STACK(1);
-                vm_stack[vm_sp++] = res;
+                vm_stack[vm_sp] = res;
+                vm_owned[vm_sp] = 0;
+                vm_sp++;
                 current_bc = caller->bytecode;
                 current_self = caller->self_cell;
                 fp = caller->fp;
@@ -2471,20 +2806,58 @@ TAIL_CALL_DISPATCH_DONE:
 #endif
             {
                 CELL * ret_val = vm_stack[--vm_sp];
+                unsigned char ret_owned = vm_owned[vm_sp];
                 --vm_frame_count;
+                /* If the return value is a reference to an owned slot of
+                   the dying frame, transfer ownership to the returned
+                   reference so the cell is reclaimed when consumed. */
+                if (!ret_owned)
+                {
+                    for (int i = fp; i < vm_sp; i++)
+                    {
+                        if (vm_owned[i] && vm_stack[i] == ret_val)
+                        {
+                            vm_owned[i] = 0;
+                            ret_owned = 1;
+                            break;
+                        }
+                    }
+                }
                 if (vm_frame_count == base_frame)
                 {
+                    /* Reclaim owned temps left in the frame region */
+                    for (int i = fp; i < vm_sp; i++)
+                    {
+                        if (vm_owned[i])
+                        {
+                            deleteList(vm_stack[i]);
+                            vm_owned[i] = 0;
+                        }
+                    }
                     CELL * final_ret = copyCellDeep(ret_val);
+                    if (ret_owned) deleteList(ret_val);
                     vm_sp = start_sp;
                     currentContext = contextSave;
                     symbolCheck = NULL;
                     stringCell = NULL;
                     return final_ret;
                 }
+                /* Reclaim owned temps left in the abandoned frame region
+                   (ret_val was popped and is excluded by the range) */
+                for (int i = fp; i < vm_sp; i++)
+                {
+                    if (vm_owned[i] && vm_stack[i] != ret_val)
+                    {
+                        deleteList(vm_stack[i]);
+                        vm_owned[i] = 0;
+                    }
+                }
                 VM_FRAME * caller = &vm_frames[vm_frame_count - 1];
                 vm_sp = fp;
                 VM_CHECK_STACK(1);
-                vm_stack[vm_sp++] = ret_val;
+                vm_stack[vm_sp] = ret_val;
+                vm_owned[vm_sp] = ret_owned;
+                vm_sp++;
                 current_bc = caller->bytecode;
                 current_self = caller->self_cell;
                 fp = caller->fp;
