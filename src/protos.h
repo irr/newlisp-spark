@@ -31,6 +31,8 @@ CELL * associationsFromTree(SYMBOL * context);
 CELL * bindList(CELL * list, int flag);
 CELL * compareOp(CELL * params, int operand);
 CELL * copyCell(CELL * cell);
+CELL * copyCellDeep(CELL * cell);
+CELL * takeEvalResult(CELL * cell, UINT * floor);
 CELL * copyList(CELL * cell);
 CELL * defineOrMacro(CELL * params, UINT type, int flags);
 CELL * p_deleteFile(CELL * params);

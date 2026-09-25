@@ -431,9 +431,11 @@ CELL * list;
 CELL * cell = NULL;
 CELL * listOrg;
 SYMBOL * symbolRef;
+UINT * newFloor;
 int insert = 0, evalFlag = 0;
 ssize_t index;
 
+newFloor = resultStackIdx;
 newCell = evaluateExpression(params);
 params = getEvalDefault(params->next, &list);
 listOrg = list;
@@ -445,7 +447,7 @@ if((symbolRef = symbolCheck))
     if(isNil((CELL *)symbolCheck->contents))
         {
         deleteList((CELL*)symbolCheck->contents);
-        listOrg = makeCell(CELL_EXPRESSION, (UINT)copyCell(newCell));
+        listOrg = makeCell(CELL_EXPRESSION, (UINT)takeEvalResult(newCell, newFloor));
         symbolCheck->contents = (UINT)listOrg;
         goto PUSH_RETURN;
         }
@@ -485,20 +487,23 @@ if(index == -1)
     {
     if(params == nilCell)
         {
-        newCell = copyCell(newCell);
-        cell = (CELL*)list->aux;    
-        list->aux = (UINT)newCell;
-        if(cell != nilCell && cell != trueCell)
-            cell->next = newCell;
-        else if(list->contents == (UINT)nilCell)
+        CELL * last;
+        newCell = takeEvalResult(newCell, newFloor);
+        /* Do not trust the aux last-element pointer: if a list element was
+           freed while the envelope survived (an upstream ownership bug),
+           aux dangles into reused cells and appending through it corrupts
+           unrelated structures (cycles, cross-links). Walk to the true last
+           element instead. */
+        last = (CELL *)list->contents;
+        if(last == nilCell)
             list->contents = (UINT)newCell;
         else
             {
-            cell = (CELL *)list->contents;
-            while(cell->next != nilCell)
-                cell = cell->next;
-            cell->next = newCell;
+            while(last->next != nilCell)
+                last = last->next;
+            last->next = newCell;
             }
+        list->aux = (UINT)newCell;
         goto PUSH_RETURN;
         }
     }
@@ -539,7 +544,7 @@ while(isList(list->type))
     params = getIntegerExt(params, (UINT*)&index, evalFlag);
     }
 
-newCell = copyCell(newCell);
+newCell = takeEvalResult(newCell, newFloor);
 if(insert == INSERT_BEFORE || list == nilCell)
     {
     if(list == (CELL*)cell->contents)

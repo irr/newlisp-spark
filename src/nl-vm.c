@@ -1422,11 +1422,13 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
         CELL * evaluated;
         if (args->type == CELL_SYMBOL)
         {
-            evaluated = copyCell((CELL *)((SYMBOL *)args->contents)->contents);
+            evaluated = copyCellDeep((CELL *)((SYMBOL *)args->contents)->contents);
         }
         else
         {
-            evaluated = copyCell(evaluateExpression(args));
+            UINT * floor = resultStackIdx;
+            CELL * evalResult = evaluateExpression(args);
+            evaluated = takeEvalResult(evalResult, floor);
         }
         VM_CHECK_STACK(1);
         vm_stack[vm_sp++] = evaluated;
@@ -2444,7 +2446,7 @@ TAIL_CALL_DISPATCH_DONE:
                 --vm_frame_count;
                 if (vm_frame_count == base_frame)
                 {
-                    CELL * final_ret = copyCell(res);
+                    CELL * final_ret = copyCellDeep(res);
                     vm_sp = start_sp;
                     currentContext = contextSave;
                     symbolCheck = NULL;
@@ -2472,7 +2474,7 @@ TAIL_CALL_DISPATCH_DONE:
                 --vm_frame_count;
                 if (vm_frame_count == base_frame)
                 {
-                    CELL * final_ret = copyCell(ret_val);
+                    CELL * final_ret = copyCellDeep(ret_val);
                     vm_sp = start_sp;
                     currentContext = contextSave;
                     symbolCheck = NULL;

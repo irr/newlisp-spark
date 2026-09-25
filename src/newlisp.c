@@ -222,6 +222,11 @@ int stringOutputRaw = TRUE;
 #define pushLambda(A) (*(lambdaStackIdx++) = (UINT)(A))
 
 int pushResultFlag = TRUE;
+/* Set by evaluateExpression when its result was pushed onto resultStack;
+   FALSE for early returns (self-eval, symbol, quote) and flag-FALSE raw
+   returns. takeEvalResult() requires it as causal proof that the entry on
+   top of the stack is the result of the evaluation it is taking over. */
+int lastResultPushed = FALSE;
 
 char startupDir[PATH_MAX]; /* start up directory, if defined via -w */
 char * tempDir; /* /tmp on unix */
@@ -1494,6 +1499,7 @@ SYMBOL * sPtr = NULL;
 
 symbolCheck = NULL;
 stringCell = NULL;
+lastResultPushed = FALSE;
 
 if(isSelfEval(cell->type))
     return(cell);
@@ -1671,6 +1677,7 @@ if(pushResultFlag)
         deleteList(popResult());
 
     pushResult(result);
+    lastResultPushed = TRUE;
     }
 else 
     pushResultFlag = TRUE;
@@ -1806,6 +1813,7 @@ CELL * cell;
 SYMBOL * symbol;
 SYMBOL * contextSave;
 UINT * resultIdxSave;
+UINT * bodyFloor = resultStackIdx;
 int localCount = 1; /* 1 for $args */
 
 if(envStackIdx > envStackTop)
@@ -1819,17 +1827,25 @@ if(arg != nilCell)
     {
     /* this symbol precheck does 10% speed improvement on lambdas  */
     if(arg->type == CELL_SYMBOL)
-        cell = result = copyCell((CELL*)((SYMBOL *)arg->contents)->contents);
+        cell = result = copyCellDeep((CELL*)((SYMBOL *)arg->contents)->contents);
     else
-        cell = result = copyCell(evaluateExpression(arg));
+        {
+        UINT * floor = resultStackIdx;
+        CELL * evalResult = evaluateExpression(arg);
+        cell = result = takeEvalResult(evalResult, floor);
+        }
     pushResult(result);
        
     while((arg = arg->next) != nilCell)
         {
         if(arg->type == CELL_SYMBOL)
-            cell = cell->next = copyCell((CELL*)((SYMBOL *)arg->contents)->contents);
+            cell = cell->next = copyCellDeep((CELL*)((SYMBOL *)arg->contents)->contents);
         else
-            cell = cell->next = copyCell(evaluateExpression(arg));
+            {
+            UINT * floor = resultStackIdx;
+            CELL * evalResult = evaluateExpression(arg);
+            cell = cell->next = takeEvalResult(evalResult, floor);
+            }
         }
     result = popResult();
     }
@@ -1852,7 +1868,11 @@ for(;;)
             {
             symbol = (SYMBOL *)cell->contents;
             if(result == nilCell)
-                result = copyCell(evaluateExpression(cell->next));
+                {
+                UINT * floor = resultStackIdx;
+                CELL * evalResult = evaluateExpression(cell->next);
+                result = takeEvalResult(evalResult, floor);
+                }
             }
         else break;
         }
@@ -1900,9 +1920,10 @@ while( (localLst = localLst->next) != nilCell)
     {
     while(resultStackIdx > resultIdxSave)
         deleteList(popResult());
+    bodyFloor = resultStackIdx;
     result = evaluateExpression(localLst);
     }
-result = copyCell(result);
+result = takeEvalResult(result, bodyFloor);
 pushResult(result);
 
 /* restore symbols used as locals */
@@ -2483,20 +2504,18 @@ cell->contents = (UINT)contents;
 return(cell);
 }
 
-CELL * copyCell(CELL * cell)
+/* Deep copy without the resultStack move optimization. Used by
+   takeEvalResult() for cells that may still be referenced elsewhere
+   (symbol contents, list subcells, AST literals): moving such a cell out
+   of the resultStack lets the let/evaluateLambda scope-restore deleteList()
+   free a cell that is still linked into a live structure. */
+CELL * copyCellDeep(CELL * cell)
 {
 #ifdef ISO_C90
 CELL * newCell;
 CELL * list;
 UINT len;
 #endif
-
-/* avoids copy if cell on resultStack */
-if(cell == (CELL *)*(resultStackIdx))
-    {
-    if(cell != nilCell && cell != trueCell)
-        return(popResult());
-    }
 
 #ifndef ISO_C90
 CELL * newCell;
@@ -2575,6 +2594,38 @@ else if(cell->type == CELL_BIGINT)
 #endif
 
 return(newCell);
+}
+
+
+CELL * copyCell(CELL * cell)
+{
+/* avoids copy if cell on resultStack */
+if(cell == (CELL *)*(resultStackIdx))
+    {
+    if(cell != nilCell && cell != trueCell)
+        return(popResult());
+    }
+
+return(copyCellDeep(cell));
+}
+
+/* Take over the result of an evaluateExpression() call whose resultStack
+   level was saved in 'floor' before the call. Pop only when the evaluation
+   left exactly its own result entry above 'floor' (a flag-TRUE exit pushes
+   the result last after cleaning other leftovers, leaving idx == floor+1);
+   that entry is a sole-owned temporary and consuming it is the intended
+   discipline. In any other state (raw flag-FALSE return, or leftover
+   entries from non-cleaning producers) the cell may still be referenced by
+   a local symbol or a live structure and must be deep-copied, so that the
+   let/evaluateLambda scope-restore deleteList() never frees a cell that is
+   still in use. */
+CELL * takeEvalResult(CELL * cell, UINT * floor)
+{
+if(cell != nilCell && cell != trueCell
+    && lastResultPushed
+    && resultStackIdx == floor + 1 && *(resultStackIdx) == (UINT)cell)
+    return(popResult());
+return(copyCellDeep(cell));
 }
 
 
@@ -5378,7 +5429,12 @@ if(symbolRef && isProtected(symbolRef->flags) && symbolRef->contents == (UINT)ce
     return(errorProcExt2(ERR_SYMBOL_PROTECTED, stuffSymbol(symbolRef)));
 
 itSymbol->contents = (UINT)cell;
-new = copyCell(evaluateExpression(params->next));
+{
+UINT * floor = resultStackIdx;
+CELL * evalResult;
+evalResult = evaluateExpression(params->next);
+new = takeEvalResult(evalResult, floor);
+}
 itSymbol->contents = (UINT)nilCell;
     
 params = params->next; 
@@ -5504,7 +5560,11 @@ if(isProtected(symbol->flags))
         return(errorProcExt2(ERR_SYMBOL_PROTECTED, stuffSymbol(symbol)));
     }
 
-cell = copyCell(evaluateExpression(params));
+{
+UINT * floor = resultStackIdx;
+CELL * evalResult = evaluateExpression(params);
+cell = takeEvalResult(evalResult, floor);
+}
 
 deleteList((CELL *)symbol->contents);
 cell = gcEvacuate(cell);
@@ -5612,10 +5672,13 @@ while(inits != nilCell)
         }
     else /* LET_NEST */
         {
+        UINT * floor = resultStackIdx;
+        CELL * evalResult;
         symbol = (SYMBOL *)cell->contents;
         if(isProtected(symbol->flags))
                 return(errorProcExt(ERR_SYMBOL_PROTECTED, cell));
-        args = copyCell(evaluateExpression(cell->next));
+        evalResult = evaluateExpression(cell->next);
+        args = takeEvalResult(evalResult, floor);
         pushEnvironment((CELL *)symbol->contents);
         pushEnvironment((UINT)symbol);
         symbol->contents = (UINT)args;
@@ -5668,8 +5731,11 @@ EVAL_LET_BODY:
 /* evaluate body expressions */
 while(body != nilCell)
     {
+    UINT * floor = resultStackIdx;
+    CELL * evalResult;
     if(result != nilCell) deleteList(result);
-    result = copyCell(evaluateExpression(body));
+    evalResult = evaluateExpression(body);
+    result = takeEvalResult(evalResult, floor);
     body = body->next;
     }
 
@@ -5881,11 +5947,12 @@ list = getCell(CELL_EXPRESSION);
 resultIdxSave = resultStackIdx;
 while(params != nilCell)
     {
+    UINT * floor = resultStackIdx;
     cell = evaluateExpression(params);
     if(cell->type == CELL_ARRAY)
         copy = arrayList(cell, TRUE);
     else
-        copy = copyCell(cell);
+        copy = takeEvalResult(cell, floor);
     if(lastCopy == NULL)
         list->contents = (UINT)copy;
     else lastCopy->next = copy;
@@ -6356,6 +6423,7 @@ SYMBOL * symbol = NULL;
 SYMBOL * sPtr;
 CELL * cellIdx;
 UINT * resultIdxSave;
+UINT * blockFloor;
 
 cell = getPushSymbolParam(params, &symbol);
 cellIdx = initIteratorIndex();
@@ -6434,6 +6502,7 @@ while(list!= nilCell)
             if(!isNil(cell)) break;
             }
         }
+    blockFloor = resultStackIdx;
     cell = evaluateBlock(params->next);
     if(cellIdx->type == CELL_LONG) cellIdx->contents += 1;
     DO_CONTINUE:    
@@ -6444,7 +6513,7 @@ FINISH_DO:
 if(symbolCheck && cell != (CELL *)symbol->contents && symbol != symbolCheck)
     pushResultFlag = FALSE;
 else
-    cell = copyCell(cell);
+    cell = takeEvalResult(cell, blockFloor);
 
 recoverIteratorIndex(cellIdx);
 
