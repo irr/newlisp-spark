@@ -1,0 +1,133 @@
+#!/usr/bin/env newlisp
+
+; qa-vm-edges - bytecode VM semantic edge cases
+;
+; Regression tests for the VM ownership/reclamation work: $it anaphor,
+; set/setq aliasing, inc/dec, argument order, FOOP self dispatch,
+; error recovery across VM frames, constant-table integrity.
+;
+; USAGE: from the repository root:
+;     ./newlisp qa/qa-specific-tests/qa-vm-edges
+
+(set 'failures 0)
+
+(define (check name got expected)
+  (if (= got expected)
+      (println ">>>>> " name " OK")
+      (begin
+        (println ">>>>> " name " FAILED: got " got ", expected " expected)
+        (++ failures))))
+
+; --- $it anaphor ---
+(check "if sets $it" (if (+ 2 3) $it) 5)
+(check "if nil falls through" (if nil $it "fb") "fb")
+(set 'r (begin (if 42) $it))
+(check "$it reset after if" r nil)
+
+; --- set/setq semantics and aliasing ---
+(set 'x 10)
+(set 'x (+ x 5))
+(check "set with expression" x 15)
+(setq y 3 z (+ y 4))
+(check "setq multi" (list y z) '(3 7))
+(check "setq returns value" (setq y z) 7)
+(set 'a 1 'b 2)
+(check "set multi" (list a b) '(1 2))
+(set 'p (+ 1 2))
+(set 'q p)
+(inc p)
+(check "no aliasing after inc" (list p q) '(4 3))
+
+; --- inc/dec ---
+(set 'c 5)
+(check "inc returns new" (inc c) 6)
+(check "inc mutated" c 6)
+(check "dec with delta" (dec c 2) 4)
+(set 'li (let (i 0) (while (< i 5) (inc i)) i))
+(check "inc on local in while" li 5)
+(let (n 10)
+  (check "inc local with delta" (inc n 3) 13)
+  (check "local mutated" n 13))
+
+; --- locals passed as references to calls ---
+(define (id v) v)
+(let (a 7)
+  (check "local passed to fn" (id a) 7)
+  (check "local unchanged" a 7))
+(define (pair a b) (list a b))
+(let (m 1 n 2)
+  (check "arg order" (pair n m) '(2 1)))
+
+; --- strings and lists in compiled code ---
+(define (greet name) (append "Hello, " name "!"))
+(check "append strings" (greet "world") "Hello, world!")
+(define (firstchar s) (s 0))
+(check "string index" (firstchar "abc") "a")
+
+; --- arithmetic (newLISP: + - * / are integer ops; add/sub/mul/div float) ---
+(check "int add" (+ 1 2) 3)
+(check "mixed int op truncates" (+ 1 2.5) 3)
+(check "float add" (add 1 2.5) 3.5)
+(check "int div" (/ 7 2) 3)
+(check "float div" (div 7 2) 3.5)
+(check "compare mixed" (< 1 2.5) true)
+
+; --- error recovery after VM error ---
+(define (boom x) (+ x 'a))
+(check "error is catchable" (catch (boom 1) 'e) true)
+(define (fine x) (* x 10))
+(check "VM usable after error" (fine 4) 40)
+(catch (boom 2) 'e2)
+(check "VM usable after 2nd error" (fine 8) 80)
+
+; --- FOOP ---
+(define (Point:Point x y) (list Point x y))
+(define (Point:mag p) (sqrt (+ (* (p 1) (p 1)) (* (p 2) (p 2)))))
+(set 'pt (Point 3 4))
+(check "FOOP method" (Point:mag pt) 5)
+(define (Rect:Rect w h) (list Rect w h))
+(define (Rect:area) (* (self 1) (self 2)))
+(set 'r (Rect 4 5))
+(check "FOOP self" (:area r) 20)
+
+; --- deep recursion: tail and non-tail ---
+(define (sumto n acc) (if (= n 0) acc (sumto (- n 1) (+ acc n))))
+(check "tail deep" (sumto 10000 0) 50005000)
+(define (sumnt n) (if (= n 0) 0 (+ n (sumnt (- n 1)))))
+(check "non-tail deep" (sumnt 5000) 12502500)
+
+; --- setf place semantics from tree-walker fallback ---
+(set 'lst '(1 2 3))
+(setf (lst 1) 99)
+(check "setf on list" lst '(1 99 3))
+
+; --- constant integrity across calls ---
+(define (frozen) '(1 2 3))
+(set 'll (list (frozen) (frozen)))
+(setf (ll 0 0) 'X)
+(check "quoted constant not mutated" (frozen) '(1 2 3))
+
+; --- catch/throw through VM frames ---
+(define (find-odd lst)
+  (catch (dolist (x lst) (if (odd? x) (throw x))) 'found)
+  found)
+(check "throw through dolist" (find-odd '(2 4 5 6)) 5)
+
+; --- argument evaluation order (left to right) ---
+(set 'tr '())
+(define (note x) (push x tr -1) x)
+(define (three a b c) (+ (* 100 a) (* 10 b) c))
+(check "arg eval order" (three (note 1) (note 2) (note 3)) 123)
+(check "eval order recorded" tr '(1 2 3))
+
+; --- integer extremes ---
+(check "max int64 literal" (+ 9223372036854775807 0) 9223372036854775807)
+(check "compare near max" (< 9223372036854775806 9223372036854775807) true)
+
+(if (zero? failures)
+    (println ">>>>> VM edge semantics tested SUCCESSFUL")
+    (println ">>>>> VM edge semantics FAILED: " failures " checks"))
+
+(exit)
+
+; eof

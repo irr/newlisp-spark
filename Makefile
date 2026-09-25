@@ -82,6 +82,8 @@ check:
 	./newlisp qa/qa-specific-tests/qa-ref
 	./newlisp qa/qa-specific-tests/qa-message
 	./newlisp qa/qa-specific-tests/qa-bigint 10000
+	./newlisp qa/qa-specific-tests/qa-vm-mem
+	./newlisp qa/qa-specific-tests/qa-vm-edges
 	./newlisp qa/qa-specific-tests/qa-bench
 
 # old naming for check
@@ -118,6 +120,8 @@ checkall:
 	./newlisp qa/qa-specific-tests/qa-bigint 10000
 	./newlisp qa/qa-specific-tests/qa-longnum
 	./newlisp qa/qa-specific-tests/qa-factorfibo 60
+	./newlisp qa/qa-specific-tests/qa-vm-mem
+	./newlisp qa/qa-specific-tests/qa-vm-edges
 	./newlisp qa/qa-specific-tests/qa-bench
 
 testall:

@@ -1874,8 +1874,11 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
                 CELL * val = vm_stack[--vm_sp];
                 unsigned char vown = vm_owned[vm_sp];
                 /* An owned temporary is sole-owned by the stack slot:
-                   transfer it to the symbol instead of copying. */
-                CELL * c = vown ? val : copyCell(val);
+                   transfer it to the symbol instead of copying.  The
+                   shared nil/true singletons are never transferred:
+                   symbols must hold private copies (see p_setf). */
+                CELL * c = (vown && val != nilCell && val != trueCell)
+                             ? val : copyCell(val);
                 c = gcEvacuate(c);
                 deleteList((CELL *)s->contents);
                 s->contents = (UINT)c;
@@ -2541,6 +2544,7 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
                 UINT * savedResultIdx = resultStackIdx;
 
                 CELL * res = nilCell;
+                unsigned char res_owned = 0;
                 if (target_fn->type == CELL_CONTEXT)
                 {
                     SYMBOL * ctx_sym = (SYMBOL *)target_fn->contents;
@@ -2549,6 +2553,7 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
                     if (isNil(target_fn))
                     {
                         res = evaluateNamespaceHash(argList, ctx_sym);
+                        res_owned = 0; /* borrowed from the dictionary */
                         goto CALL_DISPATCH_DONE;
                     }
                 }
@@ -2557,30 +2562,55 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
                 {
                     CELL * (*pfunc)(CELL *) = (CELL *(*)(CELL *))target_fn->contents;
                     res = pfunc(argList);
+                    /* ORO discipline: primitives returning a borrowed cell
+                       (e.g. nth/first on a list) set pushResultFlag FALSE;
+                       fresh, solely-owned results leave it TRUE */
+                    res_owned = (pushResultFlag != FALSE);
+                    /* p_address returns the address of its argument cell's
+                       own storage; keep owned arguments alive on the
+                       resultStack for the enclosing expression (the same
+                       lifetime the tree-walker gives them). */
+                    if (pfunc == p_address)
+                    {
+                        for (int j = fn_idx + 1; j < vm_sp; j++)
+                        {
+                            if (vm_owned[j])
+                            {
+                                pushResult(vm_stack[j]);
+                                vm_owned[j] = 0;
+                            }
+                        }
+                    }
                 }
                 else if (target_fn->type == CELL_LAMBDA)
                 {
                     res = evaluateLambda((CELL *)target_fn->contents, argList, currentContext);
+                    res_owned = 1; /* evaluateLambda returns a sole-owned cell */
                 }
                 else if (target_fn->type == CELL_EXPRESSION)
                 {
                     res = implicitIndexList(target_fn, argList);
+                    res_owned = 0; /* borrowed element */
                 }
                 else if (target_fn->type == CELL_ARRAY)
                 {
                     res = implicitIndexArray(target_fn, argList);
+                    res_owned = 0; /* borrowed element */
                 }
                 else if (target_fn->type == CELL_STRING)
                 {
                     res = implicitIndexString(target_fn, argList);
+                    res_owned = 0; /* conservative */
                 }
                 else if (isNumber(target_fn->type))
                 {
                     res = implicitNrestSlice(target_fn, argList);
+                    res_owned = 0; /* conservative */
                 }
                 else
                 {
                     res = nilCell;
+                    res_owned = 0;
                 }
 CALL_DISPATCH_DONE:
 
@@ -2589,6 +2619,35 @@ CALL_DISPATCH_DONE:
                     CELL * popped = popResult();
                     if (popped != res)
                         deleteList(popped);
+                }
+
+                /* A borrowed result may point into an owned argument
+                   (e.g. nth/first on a freshly built list, which the
+                   argument reclaiming below would free).  If any
+                   argument is owned, either take over the argument's
+                   ownership (result is that argument) or take a private
+                   copy of the result. */
+                if (!res_owned)
+                {
+                    int has_owned_arg = 0;
+                    for (int j = fn_idx + 1; j < vm_sp; j++)
+                    {
+                        if (vm_owned[j])
+                        {
+                            if (vm_stack[j] == res)
+                            {
+                                res_owned = 1; /* result takes ownership */
+                                has_owned_arg = 0;
+                                break;
+                            }
+                            has_owned_arg = 1;
+                        }
+                    }
+                    if (has_owned_arg)
+                    {
+                        res = copyCellDeep(res);
+                        res_owned = 1;
+                    }
                 }
 
                 CELL * cur = argList;
@@ -2601,11 +2660,11 @@ CALL_DISPATCH_DONE:
                 deleteList(argList);
 
                 /* Reclaim owned argument temporaries (the primitive has
-                   finished with them; results never alias owned args
-                   because structure builders copy per ORO discipline). */
+                   finished with them; a result aliasing an owned arg
+                   takes over its ownership). */
                 for (int j = fn_idx + 1; j < vm_sp; j++)
                 {
-                    if (vm_owned[j])
+                    if (vm_owned[j] && vm_stack[j] != res)
                     {
                         deleteList(vm_stack[j]);
                         vm_owned[j] = 0;
@@ -2615,7 +2674,7 @@ CALL_DISPATCH_DONE:
                 vm_sp = fn_idx;
                 VM_CHECK_STACK(1);
                 vm_stack[vm_sp] = res;
-                vm_owned[vm_sp] = 0;
+                vm_owned[vm_sp] = res_owned;
                 vm_sp++;
                 DISPATCH();
             }
@@ -2704,6 +2763,7 @@ CALL_DISPATCH_DONE:
                 UINT * savedResultIdx = resultStackIdx;
 
                 CELL * res = nilCell;
+                unsigned char res_owned = 0;
                 if (target_fn->type == CELL_CONTEXT)
                 {
                     SYMBOL * ctx_sym = (SYMBOL *)target_fn->contents;
@@ -2712,6 +2772,7 @@ CALL_DISPATCH_DONE:
                     if (isNil(target_fn))
                     {
                         res = evaluateNamespaceHash(argList, ctx_sym);
+                        res_owned = 0; /* borrowed from the dictionary */
                         goto TAIL_CALL_DISPATCH_DONE;
                     }
                 }
@@ -2720,30 +2781,52 @@ CALL_DISPATCH_DONE:
                 {
                     CELL * (*pfunc)(CELL *) = (CELL *(*)(CELL *))target_fn->contents;
                     res = pfunc(argList);
+                    /* ORO discipline: borrowed results set pushResultFlag FALSE */
+                    res_owned = (pushResultFlag != FALSE);
+                    /* p_address returns the address of its argument cell's
+                       own storage; keep owned arguments alive on the
+                       resultStack for the enclosing expression. */
+                    if (pfunc == p_address)
+                    {
+                        for (int j = fn_idx + 1; j < vm_sp; j++)
+                        {
+                            if (vm_owned[j])
+                            {
+                                pushResult(vm_stack[j]);
+                                vm_owned[j] = 0;
+                            }
+                        }
+                    }
                 }
                 else if (target_fn->type == CELL_LAMBDA)
                 {
                     res = evaluateLambda((CELL *)target_fn->contents, argList, currentContext);
+                    res_owned = 1; /* evaluateLambda returns a sole-owned cell */
                 }
                 else if (target_fn->type == CELL_EXPRESSION)
                 {
                     res = implicitIndexList(target_fn, argList);
+                    res_owned = 0; /* borrowed element */
                 }
                 else if (target_fn->type == CELL_ARRAY)
                 {
                     res = implicitIndexArray(target_fn, argList);
+                    res_owned = 0; /* borrowed element */
                 }
                 else if (target_fn->type == CELL_STRING)
                 {
                     res = implicitIndexString(target_fn, argList);
+                    res_owned = 0; /* conservative */
                 }
                 else if (isNumber(target_fn->type))
                 {
                     res = implicitNrestSlice(target_fn, argList);
+                    res_owned = 0; /* conservative */
                 }
                 else
                 {
                     res = nilCell;
+                    res_owned = 0;
                 }
 TAIL_CALL_DISPATCH_DONE:
 
@@ -2752,6 +2835,35 @@ TAIL_CALL_DISPATCH_DONE:
                     CELL * popped = popResult();
                     if (popped != res)
                         deleteList(popped);
+                }
+
+                /* A borrowed result may point into an owned argument
+                   (e.g. nth/first on a freshly built list, which the
+                   argument reclaiming below would free).  If any
+                   argument is owned, either take over the argument's
+                   ownership (result is that argument) or take a private
+                   copy of the result. */
+                if (!res_owned)
+                {
+                    int has_owned_arg = 0;
+                    for (int j = fn_idx + 1; j < vm_sp; j++)
+                    {
+                        if (vm_owned[j])
+                        {
+                            if (vm_stack[j] == res)
+                            {
+                                res_owned = 1; /* result takes ownership */
+                                has_owned_arg = 0;
+                                break;
+                            }
+                            has_owned_arg = 1;
+                        }
+                    }
+                    if (has_owned_arg)
+                    {
+                        res = copyCellDeep(res);
+                        res_owned = 1;
+                    }
                 }
 
                 CELL * cur = argList;
@@ -2769,7 +2881,7 @@ TAIL_CALL_DISPATCH_DONE:
                 vmFreeOwnedRange(fp, vm_sp, fn_idx + 1, vm_sp);
                 for (int j = fn_idx + 1; j < vm_sp; j++)
                 {
-                    if (vm_owned[j])
+                    if (vm_owned[j] && vm_stack[j] != res)
                     {
                         deleteList(vm_stack[j]);
                         vm_owned[j] = 0;
@@ -2780,6 +2892,7 @@ TAIL_CALL_DISPATCH_DONE:
                 if (vm_frame_count == base_frame)
                 {
                     CELL * final_ret = copyCellDeep(res);
+                    if (res_owned) deleteList(res);
                     vm_sp = start_sp;
                     currentContext = contextSave;
                     symbolCheck = NULL;
@@ -2790,7 +2903,7 @@ TAIL_CALL_DISPATCH_DONE:
                 vm_sp = fp;
                 VM_CHECK_STACK(1);
                 vm_stack[vm_sp] = res;
-                vm_owned[vm_sp] = 0;
+                vm_owned[vm_sp] = res_owned;
                 vm_sp++;
                 current_bc = caller->bytecode;
                 current_self = caller->self_cell;

@@ -2621,10 +2621,23 @@ return(copyCellDeep(cell));
    still in use. */
 CELL * takeEvalResult(CELL * cell, UINT * floor)
 {
-if(cell != nilCell && cell != trueCell
-    && lastResultPushed
+if(lastResultPushed
     && resultStackIdx == floor + 1 && *(resultStackIdx) == (UINT)cell)
+    {
+    /* The top entry is proven to be the result of the evaluation being
+       taken over: pop it.  This must also hold for the shared nil/true
+       singletons — evaluateExpression() pushes them like any other
+       result, and refusing the pop leaves a stale entry that later
+       positional popResult() calls (e.g. the argument-list head in
+       evaluateLambda) would wrongly consume, destroying the list.
+       Singletons are never owned, so return a private copy. */
+    if(cell == nilCell || cell == trueCell)
+        {
+        (void)popResult();
+        return(copyCellDeep(cell));
+        }
     return(popResult());
+    }
 return(copyCellDeep(cell));
 }
 

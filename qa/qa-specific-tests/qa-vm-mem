@@ -1,0 +1,87 @@
+#!/usr/bin/env newlisp
+
+; qa-vm-mem - VM memory reclamation regression test
+;
+; The bytecode VM must not leak cells in compiled loops when the
+; gen0 nursery is disabled (the default): temporaries (arithmetic
+; results, small-integer constants, $it stores) are reclaimed via
+; the vm_owned ownership tracking.
+;
+; Before the fix, these patterns leaked ~2 cells per iteration and
+; a 200M-iteration count-down grew RSS to ~6.5 GB (cellCount 400M).
+;
+; USAGE: from the repository root:
+;     ./newlisp qa/qa-specific-tests/qa-vm-mem
+
+(set 'failures 0)
+
+(define (check name got expected)
+  (if (= got expected)
+      (println ">>>>> " name " OK: " expected)
+      (begin
+        (println ">>>>> " name " FAILED: got " got ", expected " expected)
+        (++ failures))))
+
+; --- baseline cell usage ---
+(define (vm-baseline) (sys-info 0))
+(set 'base (vm-baseline))
+
+; --- 1. tail recursion: self ---------------------------------------
+(define (count-down n)
+  (if (<= n 0) 0 (count-down (- n 1))))
+(count-down 1000000)
+(check "self tail recursion 1M" (< (- (sys-info 0) base 100) 100) true)
+
+; --- 2. tail recursion: accumulator -------------------------------
+(define (sum-acc n acc)
+  (if (<= n 0) acc (sum-acc (- n 1) (+ acc n))))
+(check "sum-acc result" (sum-acc 1000000 0) 500000500000)
+(check "tail accumulator 1M" (< (- (sys-info 0) base 100) 100) true)
+
+; --- 3. while loop with global set --------------------------------
+(set 'gs 0 'gi 0)
+(while (< gi 1000000)
+  (set 'gs (+ gs gi))
+  (set 'gi (+ gi 1)))
+(check "while result" gs 499999500000)
+(check "while loop 1M" (< (- (sys-info 0) base 100) 100) true)
+
+; --- 4. non-tail recursion (frames reclaimed on unwind) ------------
+(define (sumnt n) (if (= n 0) 0 (+ n (sumnt (- n 1)))))
+(check "non-tail sum result" (sumnt 20000) 200010000)
+(check "non-tail recursion 20k" (< (- (sys-info 0) base 200) 200) true)
+
+; --- 5. fib (call/self/base-case return paths) ---------------------
+(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))
+(check "fib 25 result" (fib 25) 75025)
+(check "fib 25 leaks" (< (- (sys-info 0) base 500) 500) true)
+
+; --- 6. over-arity tail call (memmove overlap path) ----------------
+(define (over a) a)
+(define (drive n) (if (<= n 0) 0 (over (- n 1) 99 77 88)))
+(check "over-arity result" (drive 500000) 499999)
+(check "over-arity tail calls" (< (- (sys-info 0) base 100) 100) true)
+
+; --- 7. primitive-heavy loop ----------------------------------------
+(define (loopPrim n)
+  (let (s 0 i 0)
+    (while (< i n)
+      (set 's (+ s (length (string i))))
+      (inc i))
+    s))
+(loopPrim 100000)
+(check "primitive loop leaks" (< (- (sys-info 0) base 2000) 2000) true)
+
+; --- 8. mutual recursion -------------------------------------------
+(define (my-even? n) (if (= n 0) true (my-odd? (- n 1))))
+(define (my-odd? n) (if (= n 0) nil (my-even? (- n 1))))
+(check "mutual 1M result" (my-even? 1000000) true)
+(check "mutual 1M leaks" (< (- (sys-info 0) base 100) 100) true)
+
+(if (zero? failures)
+    (println ">>>>> VM memory reclamation tested SUCCESSFUL")
+    (println ">>>>> VM memory reclamation FAILED: " failures " checks"))
+
+(exit)
+
+; eof
