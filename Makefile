@@ -41,11 +41,13 @@ help:
 	@echo "  make uninstall_home  # uninstall newlisp and modules from ~/.local"
 	@echo
 	@echo "  make clean           # remove all *.o and .tar files etc. USE BETWEEN FLAVORS!"
-	@echo "  make check           # run qa-dot, qa-net, qa-xml etc. test scripts"
-	@echo "  make test            # same as 'make check' but less output"
+	@echo "  make test            # THE test entry point: full matrix, verdict, exit code"
+	@echo "  make test-fast       # quick subset of the suites for development iteration"
+	@echo "  make check           # same as test-fast but raw verbose output"
+	@echo "  make checkall        # same as test but raw verbose output"
 	@echo "  make check-comma     # run the qa-comma suite for decimal-comma locales (needs de_DE.UTF-8)"
 	@echo "  make test-comma      # same as 'make check-comma' but less output"
-	@echo "  make testall         # run an extended test suite with less output"
+	@echo "  make testall         # alias of make test (upstream compatibility)"
 	@echo "  make version         # replace version number in several files after changing in Makefile"
 	@echo "  make bench           # run qa-bench performance comparison against reference calibration"
 	@echo "  make dist            # make a source distribution .tgz package "
@@ -87,9 +89,37 @@ check:
 	./newlisp qa/qa-specific-tests/qa-vm-edges
 	./newlisp qa/qa-specific-tests/qa-bench
 
-# old naming for check
+# ---------------------------------------------------------------------------
+# Test targets
+#
+#   make test        THE entry point: full regression matrix, one result line
+#                    per suite, final verdict, nonzero exit on any failure.
+#   make test-fast   quick subset (fast suites only) for development iteration.
+#   make check       same as test-fast but raw verbose output.
+#   make checkall    same as test but raw verbose output (used by test).
+#   make testall     alias of make test (kept for upstream compatibility).
+# ---------------------------------------------------------------------------
+
+define RUN_VERDICT
+	@make $(1) > /tmp/newlisp-test.log 2>&1; \
+	grep '>>>' /tmp/newlisp-test.log; \
+	if grep -qE 'FAILED|PROBLEM|ERROR factoring| failed |ERR:' /tmp/newlisp-test.log; then \
+		echo ""; \
+		echo ">>>>> SOME TESTS FAILED - full log: /tmp/newlisp-test.log"; exit 1; \
+	else \
+		echo ""; \
+		echo ">>>>> ALL TEST SUITES PASSED ($(1))"; \
+	fi
+endef
+
 test:
-	make check | grep '>>>'
+	$(call RUN_VERDICT,checkall)
+
+# alias kept for upstream compatibility
+testall: test
+
+test-fast:
+	$(call RUN_VERDICT,check)
 
 # decimal-comma locale suite (needs the de_DE.UTF-8 locale installed)
 check-comma:
@@ -125,9 +155,6 @@ checkall:
 	NEWLISP_ENABLE_GEN0=1 ./newlisp qa/qa-specific-tests/qa-vm-mem
 	./newlisp qa/qa-specific-tests/qa-vm-edges
 	./newlisp qa/qa-specific-tests/qa-bench
-
-testall:
-	make checkall | grep '>>>'
 
 # benchmark
 bench:

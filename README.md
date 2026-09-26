@@ -11,7 +11,7 @@
 
 **newLISP Spark** is a modernized, high-performance distribution of newLISP — an elegant, lightweight, LISP-like scripting language originally created by **Lutz Mueller** for general programming, artificial intelligence, data manipulation, and statistical computing.
 
-This enhanced release overhauls the newLISP engine with a **Direct-Threaded Bytecode Virtual Machine**, full **Tail Call Optimization (TCO)**, achieving order-of-magnitude speedups in recursion and iterative loops — and now runs the **complete regression suite** (`make testall`) cleanly on **x86_64 and aarch64/ARM64**, including NVIDIA **DGX Spark**.
+This enhanced release overhauls the newLISP engine with a **Direct-Threaded Bytecode Virtual Machine**, full **Tail Call Optimization (TCO)**, achieving order-of-magnitude speedups in recursion and iterative loops — and now runs the **complete regression suite** (`make test`) cleanly on **x86_64 and aarch64/ARM64**, including NVIDIA **DGX Spark**.
 
 **Maintained by Ivan Rocha** — Copyright (C) 2026 Ivan Rocha.
 
@@ -40,7 +40,7 @@ This enhanced release overhauls the newLISP engine with a **Direct-Threaded Byte
 - **Deterministic VM Memory Reclamation (`nl-vm.c`)** — compiled code no longer leaks:
   - **Ownership tracking**: a shadow map marks sole-owned VM temporaries (arithmetic results, argument copies) and reclaims them at every drop site — operand pops, slot overwrites, frame teardown, tail-call slot resets — with identity guards for argument-aliased values and zero-copy ownership transfer into symbols and return values.
   - **Error unwinding**: `errorProc()`/`throw` longjmps used to leak every in-flight VM temporary and frame (50k caught errors leaked ~150k cells); catch sites now unwind the VM to their captured state.
-  - **Result**: loops that leaked ~2 cells/iteration (200M-iteration count-down grew RSS to ~6.5 GB) now run flat at ~510 cells; a 600-request HTTP-daemon soak stays flat at ~3.3 MB RSS; `qa-bench` improved from ratio 1.09 → 0.51. Guarded by `qa-vm-mem`/`qa-vm-edges` in `make testall`.
+  - **Result**: loops that leaked ~2 cells/iteration (200M-iteration count-down grew RSS to ~6.5 GB) now run flat at ~510 cells; a 600-request HTTP-daemon soak stays flat at ~3.3 MB RSS; `qa-bench` improved from ratio 1.09 → 0.51. Guarded by `qa-vm-mem`/`qa-vm-edges` in `make test`.
 
 - **Correctness fixes found by the reclamation work**:
   - `takeEvalResult()`: mid-list boolean arguments (`(< a b)`) destroyed all parameter bindings of tree-walker lambdas (stale shared-singleton entry on the resultStack was popped as the argument-list head).
@@ -51,7 +51,7 @@ This enhanced release overhauls the newLISP engine with a **Direct-Threaded Byte
   - **Auto-detecting build**: plain `make` now detects aarch64 (`uname -m`) and selects the new `makefiles/dgx_spark_utf8_ffi.mk` (64-bit UTF-8 + libffi, tuned with `-mcpu=native` for the Grace CPU); x86_64 keeps its previous makefile. No manual makefile selection needed on ARM Linux.
   - **libffi correctness on ARM**: FFI `char` returns are now read as `signed char` — plain `char` is unsigned on aarch64, which corrupted signed 8-bit FFI return values.
   - **Portable FFI test suite**: `qa-libffi` no longer hardcodes `cc -m64` — it picks the right flags per architecture, so the full FFI/struct/callback battery passes on ARM Linux.
-  - **Verified on DGX Spark**: the complete extended suite (`make testall` — 21 tests incl. Cilk process API, FOOP, bigint, libffi, network, pipes) passes end-to-end, with a **0.73–0.76 qa-bench performance ratio** (vs. the 2016 MacBook reference calibration, i.e. faster than the reference machine).
+  - **Verified on DGX Spark**: the complete extended suite (`make test` — 26 tests incl. Cilk process API, FOOP, bigint, libffi, network, pipes) passes end-to-end, with a **0.73–0.76 qa-bench performance ratio** (vs. the 2016 MacBook reference calibration, i.e. faster than the reference machine).
 
 - **Bytecode VM Correctness Fixes (s1)**:
   - **Cilk process API fixed** (`spawn`/`sync`/`abort`): the compiler turned `let`/`local`-bound variables into VM slots, but `spawn` writes results through the *symbol* (newLISP's dynamic binding) — spawned results were invisible to compiled code. Calls passing a quoted local symbol (e.g. `(spawn 'a ...)`, `(set 'a ...)`) now force fallback to the tree-walking evaluator, restoring correct semantics.
@@ -66,7 +66,7 @@ This enhanced release overhauls the newLISP engine with a **Direct-Threaded Byte
 
 - **Memory Safety & Rock-Solid Compatibility**:
   - **Magic-Tagged Bytecode Handles**: Bytecode objects are tagged with `BYTECODE_MAGIC` (`0xBEEC0DE0`) in `cell->aux`, preserving newLISP's native last-element pointer optimization on standard lists and eliminating memory corruption hazards.
-  - **100% Test Suite Pass**: All 374 built-in primitives, contexts as objects, and scoping tests in the `qa-dot` suite pass with **0 errors** — and the complete extended suite (`make testall`, 21 tests incl. Cilk/FOOP/libffi/bigint/network) passes end-to-end on x86_64 **and aarch64/ARM64 (DGX Spark)**.
+  - **100% Test Suite Pass**: All 374 built-in primitives, contexts as objects, and scoping tests in the `qa-dot` suite pass with **0 errors** — and the complete extended suite (`make test`, 26 tests incl. Cilk/FOOP/libffi/bigint/network) passes end-to-end on x86_64 **and aarch64/ARM64 (DGX Spark)**.
 
 - **Modernized Interactive REPL (`newlisp.c`)**:
   - **Automatic Multi-Line Input**: Automatically detects incomplete expressions (unclosed parentheses `(...)`, double-quoted strings `"..."`, `{...}` braced strings with nesting, and `[text]...[/text]` tags) and seamlessly collects continuation lines until brackets are balanced, then evaluates immediately.
@@ -148,15 +148,18 @@ total time: ...
 >>>>> ALL FUNCTIONS FINISHED SUCCESSFUL: ./newlisp
 ```
 
-Additional test suites can be executed via:
+Additional test suites:
 ```bash
-make check
-# or the complete extended suite (Cilk processes, FOOP, libffi,
-# bigint, network, pipes — verified green on x86_64 and aarch64/DGX Spark):
-make testall
-# decimal-comma locale suite (qa/qa-comma; needs de_DE.UTF-8 installed):
-make test-comma
+make test          # THE entry point: full regression matrix (26 suites),
+                   # one result line per suite, final verdict + exit code
+make test-fast     # quick subset for development iteration
+make check         # same as test-fast, but raw verbose output
+make checkall      # same as test, but raw verbose output
+make test-comma    # decimal-comma locale suite (qa/qa-comma; needs de_DE.UTF-8 installed)
 ```
+`make test` prints `>>>>> ALL TEST SUITES PASSED` and exits 0 only when every
+suite (including the `NEWLISP_ENABLE_GEN0=1` nursery run) is green, so it is
+safe to use as a CI gate. `make testall` is kept as an alias of `make test`.
 
 ---
 
@@ -170,7 +173,7 @@ make test-comma
 ├── bench/                    # Benchmark harnesses: fib.lsp, loop.lsp, tco.lsp + Python 3.14 reference (bench.py)
 ├── qa/                       # Test suites (run from the repository root)
 │   ├── qa-dot / qa-comma     # Complete language regression test suites (`make test` / `make test-comma`)
-│   └── qa-specific-tests/    # Extended suite: Cilk, FOOP, libffi, bigint, network, pipes (`make testall`)
+│   └── qa-specific-tests/    # Extended suite: Cilk, FOOP, libffi, bigint, network, pipes (`make test`)
 ├── modules/                  # Standard library modules (curl, crypto, sqlite3, stat, etc.)
 ├── examples/                 # Sample applications and scripts
 └── doc/
