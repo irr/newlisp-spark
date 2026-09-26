@@ -26,7 +26,7 @@ obj:
 obj/%.o: %.c | obj
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJS): primes.h protos.h makefiles/linux_openwrt.mk
+$(OBJS): primes.h protos.h newlisp.h nl-vm.h makefiles/linux_openwrt.mk
 
 
 VPATH = src pcre

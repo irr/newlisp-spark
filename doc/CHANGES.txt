@@ -7605,8 +7605,17 @@ leaked ~2 cells per iteration; a 200M-iteration tail loop grew RSS to
   back to gen1 past 75% of the arena); collection happens only at
   top-level expression boundaries via gen0MaybeCollect() from
   executeCommandLine(). The nursery remains opt-in
-  (NEWLISP_ENABLE_GEN0=1); one known issue remains under that env
-  var (a while-accumulator check in qa-vm-mem).
+  (NEWLISP_ENABLE_GEN0=1, NEWLISP_GEN0_CELLS=N overrides the arena
+  size for testing); the full suite passes with the nursery enabled.
+- Build: all object files now depend on newlisp.h and nl-vm.h in every
+  makefiles/*.mk. The old rule only tracked primes.h/protos.h, so
+  edits to the static-inline allocator in newlisp.h (and the nl-vm.h
+  declarations) silently left stale objects in obj/ - producing a
+  mixed binary whose gen0 allocator still collected from inside
+  allocation, corrupting data under NEWLISP_ENABLE_GEN0 (manifested
+  as wrong while-loop accumulators and early loop exits in
+  qa-vm-mem/qa-factorfibo). Found via gdb hardware watchpoints on the
+  corrupted cells.
 - Tests: qa/qa-specific-tests/qa-vm-mem (cellCount stability across
   1M-iteration tail/accumulator/while/non-tail/fib/over-arity/
   primitive/mutual loops plus error paths) and qa-vm-edges (37

@@ -23,6 +23,6 @@ obj:
 obj/%.o: %.c | obj
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJS): primes.h protos.h makefiles/linuxLP64_utf8.mk
+$(OBJS): primes.h protos.h newlisp.h nl-vm.h makefiles/linuxLP64_utf8.mk
 
 VPATH = src pcre

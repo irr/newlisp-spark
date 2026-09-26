@@ -2068,12 +2068,19 @@ void initGenerationalGC(void)
    global registers, VM stack and frames). */
 if(getenv("NEWLISP_ENABLE_GEN0") && gen0_start == NULL)
     {
-    gen0_start = (CELL *)allocMemory(GEN0_SIZE_CELLS * sizeof(CELL));
+    int cells = GEN0_SIZE_CELLS;
+    const char * cellsEnv = getenv("NEWLISP_GEN0_CELLS");
+    if(cellsEnv != NULL)
+        {
+        cells = atoi(cellsEnv);
+        if(cells < 1024) cells = 1024;
+        }
+    gen0_start = (CELL *)allocMemory(cells * sizeof(CELL));
     gen0_ptr = gen0_start;
-    gen0_limit = gen0_start + GEN0_SIZE_CELLS;
+    gen0_limit = gen0_start + cells;
     gen0_boundary_limit = getenv("NEWLISP_GEN0_NOALLOC")
         ? gen0_start   /* debug: bumping disabled, cells come from gen1 */
-        : gen0_limit - GEN0_SIZE_CELLS / 4;
+        : gen0_limit - cells / 4;
     }
 }
 

@@ -30,7 +30,7 @@ obj:
 obj/%.o: %.c | obj
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJS): primes.h protos.h makefiles/dgx_spark_utf8_ffi.mk
+$(OBJS): primes.h protos.h newlisp.h nl-vm.h makefiles/dgx_spark_utf8_ffi.mk
 
 test: default
 	./newlisp -n "test-run"

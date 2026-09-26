@@ -20,7 +20,7 @@ obj:
 obj/%.o: %.c | obj
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJS): primes.h protos.h makefiles/linux_redhat_utf8_ffi.mk
+$(OBJS): primes.h protos.h newlisp.h nl-vm.h makefiles/linux_redhat_utf8_ffi.mk
 
 
 

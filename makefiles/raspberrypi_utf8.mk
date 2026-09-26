@@ -26,7 +26,7 @@ obj:
 obj/%.o: %.c | obj
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OBJS): primes.h protos.h makefiles/raspberrypi_utf8.mk
+$(OBJS): primes.h protos.h newlisp.h nl-vm.h makefiles/raspberrypi_utf8.mk
 
 
 VPATH = src pcre
