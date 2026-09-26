@@ -78,6 +78,20 @@
 (check "mutual 1M result" (my-even? 1000000) true)
 (check "mutual 1M leaks" (< (- (sys-info 0) base 100) 100) true)
 
+; --- 9. error paths: caught errors must not leak --------------------
+; errorProc()/throw longjmp past executeBytecode(); the catch sites
+; must unwind and reclaim the abandoned VM temporaries and frames.
+(define (boom x) (+ x 'a))
+(dotimes (i 20000)
+  (catch (boom i) 'e))
+(check "caught errors 20k" (< (- (sys-info 0) base 2000) 2000) true)
+(dotimes (i 20000)
+  (catch (throw (+ i 1)) 'r))
+(check "caught throws 20k" (< (- (sys-info 0) base 2000) 2000) true)
+(define (safe n) (catch (boom n) 'e) 42)
+(dotimes (i 20000) (safe i))
+(check "nested catch 20k" (< (- (sys-info 0) base 2000) 2000) true)
+
 (if (zero? failures)
     (println ">>>>> VM memory reclamation tested SUCCESSFUL")
     (println ">>>>> VM memory reclamation FAILED: " failures " checks"))

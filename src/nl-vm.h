@@ -104,6 +104,11 @@ extern int vm_frame_count;
 
 /* Functions */
 void initBytecodeVM(void);
+
+/* error unwinding: see nl-vm.c */
+void vmCaptureState(int * spOut, int * frameCountOut);
+void vmUnwindToState(int sp, int frameCount, CELL * keep);
+void vmResetAll(void);
 BYTECODE_OBJ * compileLambda(CELL * lambda, SYMBOL * selfSymbol);
 CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext);
 void freeBytecodeObj(BYTECODE_OBJ * bc);

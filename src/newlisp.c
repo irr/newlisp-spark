@@ -1150,6 +1150,8 @@ pushResultFlag = TRUE;
 currentContext = mainContext;
 itSymbol->contents = (UINT)nilCell;
 closeStrStream(&replMultiStream);
+/* reclaim any VM state left over by an error longjmp */
+vmResetAll();
 }
 
 
@@ -1692,11 +1694,16 @@ CELL *  evaluateExpressionSafe(CELL * cell, int * errNo)
 {
 jmp_buf errorJumpSave;
 CELL * result;
+int vmSpSave, vmFramesSave;
 
+vmCaptureState(&vmSpSave, &vmFramesSave);
 memcpy(errorJumpSave, errorJump, sizeof(jmp_buf));
 if((*errNo = setjmp(errorJump)) != 0)
     {
     memcpy(errorJump, errorJumpSave, sizeof(jmp_buf));
+    /* reclaim VM temporaries from the aborted evaluation;
+       keep a thrown value cell still in flight */
+    vmUnwindToState(vmSpSave, vmFramesSave, throwResult);
     return(NULL);
     }
 
@@ -4858,6 +4865,7 @@ jmp_buf errorJumpSave;
 UINT * envStackIdxSave;
 UINT * lambdaStackIdxSave;
 int recursionCountSave;
+int vmSpSave, vmFramesSave;
 int value;
 CELL * expr;
 CELL * result;
@@ -4877,6 +4885,7 @@ if(params->next != nilCell)
 memcpy(errorJumpSave, errorJump, sizeof(jmp_buf));
 /* save general environment */
 envStackIdxSave = envStackIdx;
+vmCaptureState(&vmSpSave, &vmFramesSave);
 recursionCountSave = recursionCount;
 lambdaStackIdxSave = lambdaStackIdx;
 contextSave = currentContext;
@@ -4896,6 +4905,9 @@ if((value = setjmp(errorJump)) != 0)
     /* restore FOOP environment */
     objSymbol.contents = (UINT)objSave;
     objCell = objCellSave;
+    /* reclaim VM temporaries from the aborted evaluation; keep a
+       thrown value cell still in flight */
+    vmUnwindToState(vmSpSave, vmFramesSave, throwResult);
 
     evalCatchFlag--;
     if(value == EXCEPTION_THROW)
@@ -4999,6 +5011,7 @@ SYMBOL * contextSave = NULL;
 UINT * resultIdxSave;
 jmp_buf errorJumpSave;
 int recursionCountSave;
+int vmSpSave, vmFramesSave;
 UINT * envStackIdxSave;
 UINT offset;
 CELL * xlate;
@@ -5018,6 +5031,7 @@ if(proc != nilCell)
     {
     recursionCountSave = recursionCount;
     envStackIdxSave = envStackIdx;
+    vmCaptureState(&vmSpSave, &vmFramesSave);
     evalCatchFlag++;
     memcpy(errorJumpSave, errorJump, sizeof(jmp_buf));
 
@@ -5028,6 +5042,7 @@ if(proc != nilCell)
         evalCatchFlag--;
         recursionCount = recursionCountSave;
         currentContext = contextSave;
+        vmUnwindToState(vmSpSave, vmFramesSave, throwResult);
         if(mode == READ_EXPR)
             return(copyCell(evaluateExpression(proc)));
         return(evaluateExpression(proc));

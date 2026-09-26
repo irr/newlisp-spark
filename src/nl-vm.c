@@ -1481,6 +1481,41 @@ static void vmFreeOwnedRange(int from, int to, int keepFrom, int keepTo)
     }
 }
 
+/* ---------- error unwinding ----------
+   errorProc()/throw longjmp past executeBytecode(), skipping all
+   reclamation and leaving vm_sp/vm_frame_count pointing into the
+   aborted invocation.  Catch sites capture the VM state before
+   establishing their setjmp() and unwind to it when an error lands:
+   owned temporaries above the saved stack pointer are reclaimed
+   (except 'keep', e.g. a thrown value cell still in flight) and the
+   abandoned frames are popped.  A live outer VM invocation is never
+   touched: its frames and slots all sit below the saved pointers. */
+
+void vmCaptureState(int * spOut, int * frameCountOut)
+{
+    *spOut = vm_sp;
+    *frameCountOut = vm_frame_count;
+}
+
+void vmUnwindToState(int sp, int frameCount, CELL * keep)
+{
+    for (int i = sp; i < vm_sp; i++)
+    {
+        if (vm_owned[i] && vm_stack[i] != keep)
+        {
+            deleteList(vm_stack[i]);
+            vm_owned[i] = 0;
+        }
+    }
+    vm_sp = sp;
+    vm_frame_count = frameCount;
+}
+
+void vmResetAll(void)
+{
+    vmUnwindToState(0, 0, NULL);
+}
+
 CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
 {
     if (__builtin_expect(vm_stack == NULL, 0)) initBytecodeVM();
@@ -2561,6 +2596,12 @@ CELL * executeBytecode(CELL * lambdaCell, CELL * args, SYMBOL * newContext)
                 if (target_fn->type == CELL_PRIMITIVE)
                 {
                     CELL * (*pfunc)(CELL *) = (CELL *(*)(CELL *))target_fn->contents;
+                    /* Borrowed-returning primitives set pushResultFlag FALSE
+                       as their last act; the flag must not carry over a stale
+                       value from earlier evaluation (self-evaluating
+                       arguments skip the reset at the end of
+                       evaluateExpression). */
+                    pushResultFlag = TRUE;
                     res = pfunc(argList);
                     /* ORO discipline: primitives returning a borrowed cell
                        (e.g. nth/first on a list) set pushResultFlag FALSE;
@@ -2780,6 +2821,8 @@ CALL_DISPATCH_DONE:
                 if (target_fn->type == CELL_PRIMITIVE)
                 {
                     CELL * (*pfunc)(CELL *) = (CELL *(*)(CELL *))target_fn->contents;
+                    /* see OP_CALL: reset the flag against stale values */
+                    pushResultFlag = TRUE;
                     res = pfunc(argList);
                     /* ORO discipline: borrowed results set pushResultFlag FALSE */
                     res_owned = (pushResultFlag != FALSE);
@@ -2837,29 +2880,30 @@ TAIL_CALL_DISPATCH_DONE:
                         deleteList(popped);
                 }
 
-                /* A borrowed result may point into an owned argument
-                   (e.g. nth/first on a freshly built list, which the
-                   argument reclaiming below would free).  If any
-                   argument is owned, either take over the argument's
-                   ownership (result is that argument) or take a private
-                   copy of the result. */
+                /* A borrowed result may point into any owned cell of the
+                   dying frame region (an owned argument, or an owned
+                   current-frame slot, e.g. nth/first on a freshly built
+                   local list).  If any owned cell is present, either
+                   take over its ownership (result is that cell) or
+                   take a private copy of the result; afterwards the
+                   whole region can be reclaimed. */
                 if (!res_owned)
                 {
-                    int has_owned_arg = 0;
-                    for (int j = fn_idx + 1; j < vm_sp; j++)
+                    int has_owned = 0;
+                    for (int j = fp; j < vm_sp; j++)
                     {
                         if (vm_owned[j])
                         {
                             if (vm_stack[j] == res)
                             {
                                 res_owned = 1; /* result takes ownership */
-                                has_owned_arg = 0;
+                                has_owned = 0;
                                 break;
                             }
-                            has_owned_arg = 1;
+                            has_owned = 1;
                         }
                     }
-                    if (has_owned_arg)
+                    if (has_owned)
                     {
                         res = copyCellDeep(res);
                         res_owned = 1;
@@ -2875,11 +2919,10 @@ TAIL_CALL_DISPATCH_DONE:
                 }
                 deleteList(argList);
 
-                /* The tail call replaces the current frame: reclaim
-                   its owned slot values (except those referenced by the
-                   arguments) and the owned argument temporaries. */
-                vmFreeOwnedRange(fp, vm_sp, fn_idx + 1, vm_sp);
-                for (int j = fn_idx + 1; j < vm_sp; j++)
+                /* The tail call replaces the current frame: reclaim all
+                   owned values in the dying frame region (slots, fn
+                   position, arguments) except the result. */
+                for (int j = fp; j < vm_sp; j++)
                 {
                     if (vm_owned[j] && vm_stack[j] != res)
                     {
@@ -2891,8 +2934,14 @@ TAIL_CALL_DISPATCH_DONE:
                 --vm_frame_count;
                 if (vm_frame_count == base_frame)
                 {
-                    CELL * final_ret = copyCellDeep(res);
-                    if (res_owned) deleteList(res);
+                    /* res_owned marks a sole-owned value (primitive result
+                       or the private copy taken above): transfer it to
+                       the caller instead of re-copying.  The tree walker
+                       relies on pushResultFlag to track the returned
+                       value: the last primitive inside the VM may have
+                       left it FALSE, so restore the contract. */
+                    CELL * final_ret = res_owned ? res : copyCellDeep(res);
+                    pushResultFlag = TRUE;
                     vm_sp = start_sp;
                     currentContext = contextSave;
                     symbolCheck = NULL;
@@ -2923,17 +2972,31 @@ TAIL_CALL_DISPATCH_DONE:
                 --vm_frame_count;
                 /* If the return value is a reference to an owned slot of
                    the dying frame, transfer ownership to the returned
-                   reference so the cell is reclaimed when consumed. */
+                   reference so the cell is reclaimed when consumed.  If
+                   it is a borrowed value pointing into any other owned
+                   frame value (e.g. the last element of a local list),
+                   take a private copy before the frame is reclaimed. */
                 if (!ret_owned)
                 {
+                    int has_owned = 0;
                     for (int i = fp; i < vm_sp; i++)
                     {
-                        if (vm_owned[i] && vm_stack[i] == ret_val)
+                        if (vm_owned[i])
                         {
-                            vm_owned[i] = 0;
-                            ret_owned = 1;
-                            break;
+                            if (vm_stack[i] == ret_val)
+                            {
+                                vm_owned[i] = 0;
+                                ret_owned = 1; /* ownership transfers */
+                                has_owned = 0;
+                                break;
+                            }
+                            has_owned = 1;
                         }
+                    }
+                    if (has_owned)
+                    {
+                        ret_val = copyCellDeep(ret_val);
+                        ret_owned = 1;
                     }
                 }
                 if (vm_frame_count == base_frame)
@@ -2947,8 +3010,13 @@ TAIL_CALL_DISPATCH_DONE:
                             vm_owned[i] = 0;
                         }
                     }
-                    CELL * final_ret = copyCellDeep(ret_val);
-                    if (ret_owned) deleteList(ret_val);
+                    /* ret_owned marks a sole-owned value (slot transfer or
+                       the private copy taken above): transfer it to the
+                       caller.  Restore pushResultFlag for the tree
+                       walker's result tracking (a borrowed-returning
+                       primitive may have left it FALSE). */
+                    CELL * final_ret = ret_owned ? ret_val : copyCellDeep(ret_val);
+                    pushResultFlag = TRUE;
                     vm_sp = start_sp;
                     currentContext = contextSave;
                     symbolCheck = NULL;
