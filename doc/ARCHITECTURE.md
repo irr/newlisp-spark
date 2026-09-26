@@ -150,20 +150,23 @@ When any other function or lambda is invoked in tail position, `OP_TAIL_CALL <ar
 ### 3.1 Memory Layout
 
 - **Gen 0 Nursery (64 MB Arena)**:
-  - Allocated once at startup (`initGenerationalGC()`).
+  - Allocated once at startup (`initGenerationalGC()`), opt-in via `NEWLISP_ENABLE_GEN0=1`.
   - Contains up to 2,097,152 `CELL` structures.
-  - Allocation is purely an inlined bump pointer increment:
+  - Allocation is purely an inlined bump pointer increment; allocators
+    **never collect** — past the arena capacity
+    (`gen0_boundary_limit`, 75%) they fall back to the Gen 1 free list
+    until a safe point collects:
     ```c
     static inline CELL * stuffInteger(UINT contents) {
         if (__builtin_expect(gen0_ptr != NULL, 1)) {
-            if (__builtin_expect(gen0_ptr >= gen0_limit, 0))
-                collectGen0(NULL);
+            if (__builtin_expect(gen0_ptr >= gen0_boundary_limit, 0))
+                return(allocGen1CellWithContents(CELL_LONG, contents));
             CELL * cell = gen0_ptr++;
             cell->type = CELL_LONG;
             cell->next = nilCell;
             cell->aux = (UINT)nilCell;
             cell->contents = contents;
-            return cell;
+            return(cell);
         }
         return allocGen1CellWithContents(CELL_LONG, contents);
     }
@@ -171,7 +174,19 @@ When any other function or lambda is invoked in tail position, `OP_TAIL_CALL <ar
 - **Gen 1 Tenured Heap**:
   - Manages long-lived structures: symbol definitions, contexts, and surviving cells promoted from Gen 0.
 
-### 3.2 Cheney-Style Copy Evacuation
+### 3.2 Safe-Point Collection
+
+The tree-walking evaluator holds raw C-stack pointers into the nursery
+between expression boundaries; evacuating from inside an allocator
+corrupts them (the historical `qa-factorfibo` failure). Collection
+therefore happens **only at top-level expression boundaries**
+(`gen0MaybeCollect()`, called from `executeCommandLine()` after a
+command completes): at that point the C stack holds no raw cell
+pointers and every live cell is a GC root. Within a single long-running
+expression the nursery fills once and allocations fall back to Gen 1,
+where deterministic reclamation (below) keeps memory bounded.
+
+### 3.3 Cheney-Style Copy Evacuation
 
 When the Gen 0 nursery fills:
 1. `collectGen0` initiates a minor collection.
@@ -183,6 +198,38 @@ When the Gen 0 nursery fills:
    - Active VM operand stack (`vm_stack`) and active frames (`vm_frames`).
 3. Surviving reachable cells are evacuated to Gen 1 (`gcEvacuate`), leaving forwarding pointers (`CELL_FORWARD = 0x10000`).
 4. `gen0_ptr` is reset to `gen0_start`, recycling the entire 64 MB arena in $O(1)$ time.
+
+### 3.4 Deterministic Reclamation in the VM (ownership tracking)
+
+Independently of the collector, the bytecode VM reclaims its own
+temporaries deterministically (`nl-vm.c`):
+
+- A shadow ownership map `vm_owned[]` parallel to `vm_stack[]` marks
+  slots holding sole-owned VM temporaries (arithmetic results,
+  evaluated argument copies). Borrowed/shared references (symbol
+  contents, constant-table cells, `nilCell`/`trueCell`, local-slot
+  references) are never freed.
+- Owned cells are reclaimed at every drop site: operand pops,
+  comparison/arithmetic consumption, slot overwrites, `RET` frame
+  teardown and tail-call slot resets — with identity guards for values
+  aliased by incoming arguments, and ownership *transfer* to
+  symbols/return values where sole ownership allows it.
+- Primitive call results are classified with newLISP's ORO
+  `pushResultFlag` discipline (borrowed-returning primitives like
+  `nth`/`first` set it FALSE); borrowed results pointing into owned
+  arguments or dying-frame slots are deep-copied before reclamation.
+- `set`/`setq`/`inc`/`dec` compile as STORE+LOAD instead of DUP+STORE,
+  letting stores take ownership transfer-free.
+- On `errorProc()`/`throw` longjmps the catch sites
+  (`reset()`, `evaluateExpressionSafe()`, `p_catch()`,
+  `sysEvalString()`) unwind the VM to their captured state
+  (`vmUnwindToState()`), reclaiming the abandoned temporaries and
+  frames while a thrown value stays alive.
+
+Result: compiled loops that previously leaked ~2 cells per iteration
+(a 200M-iteration tail loop grew RSS to ~6.5 GB) now run flat at a few
+hundred cells; caught errors no longer leak; `qa-vm-mem` and
+`qa-vm-edges` in `make testall` guard both properties.
 
 ---
 

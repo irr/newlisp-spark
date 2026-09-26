@@ -7567,3 +7567,51 @@ Maintained by Ivan Rocha, Copyright (C) 2026 Ivan Rocha.
    - qa-net/qa-net6 load the curl module; the now obsolete
      test-get-url/put-url/post-url/delete-url definitions were removed
      from qa-dot, qa-comma and qa-bench (coverage moved to qa-curl).
+
+10.8 maintenance: deterministic VM memory reclamation and correctness fixes
+
+Memory reclamation in the bytecode VM (previously compiled loops
+leaked ~2 cells per iteration; a 200M-iteration tail loop grew RSS to
+~6.5 GB and cellCount to 400M):
+
+- src/nl-vm.c: shadow ownership map (vm_owned[]) parallel to the VM
+  stack marks sole-owned temporaries; reclamation at every drop site
+  (operand pops, comparison/arithmetic consumption, slot overwrites,
+  RET frame teardown, tail-call slot resets) with identity guards for
+  argument-aliased values; zero-copy ownership transfer into symbols,
+  frame slots and return values; shared immutable 0/1/2 singletons for
+  OP_CONST_0/1/2; set/setq/inc/dec compile as STORE+LOAD instead of
+  DUP+STORE; primitive call results classified via the ORO
+  pushResultFlag discipline with copy-guards for borrowed results
+  pointing into owned arguments or dying-frame slots; p_address keeps
+  its argument cells alive for the enclosing expression.
+- src/newlisp.c: error unwinding — errorProc()/throw longjmps leak all
+  in-flight VM temporaries and frames; reset() now calls vmResetAll()
+  and evaluateExpressionSafe()/p_catch()/sysEvalString() unwind to
+  their captured state (vmUnwindToState), keeping thrown values alive.
+- src/newlisp.c: takeEvalResult() refused the causal pop for the
+  shared nil/true singletons, leaving a stale resultStack entry that
+  evaluateLambda() popped as the argument-list head: a mid-list
+  boolean argument ((f "X" (< a b) v)) destroyed all parameter
+  bindings of tree-walker lambdas.
+- src/primes.h: swap was missing SYMBOL_DESTRUCTIVE (0x400) — compiled
+  lambdas corrupted the shared constant table instead of mutating
+  source literals; qa-inplace passes again.
+- src/newlisp.c, src/nl-list.c: p_setf()/updateCell() pushed evaluated
+  value cells directly onto the gen1 free list — with the gen0 nursery
+  enabled those cells live in the arena, handing live nursery storage
+  to the gen1 allocator (double allocation, silent corruption).
+- GC safe-point design: gen0 allocators no longer collect (they fall
+  back to gen1 past 75% of the arena); collection happens only at
+  top-level expression boundaries via gen0MaybeCollect() from
+  executeCommandLine(). The nursery remains opt-in
+  (NEWLISP_ENABLE_GEN0=1); one known issue remains under that env
+  var (a while-accumulator check in qa-vm-mem).
+- Tests: qa/qa-specific-tests/qa-vm-mem (cellCount stability across
+  1M-iteration tail/accumulator/while/non-tail/fib/over-arity/
+  primitive/mutual loops plus error paths) and qa-vm-edges (37
+  semantic checks: $it, set/inc aliasing, arg order, FOOP self, error
+  recovery, constant integrity), both wired into make check/testall.
+- Benchmarks: qa-bench 2725ms -> 1217ms (ratio 1.09 -> 0.51 vs the
+  reference machine); fib 30 -30%; TCO 100M -9.5%; 600-request
+  HTTP-daemon soak flat at ~3.3 MB RSS.

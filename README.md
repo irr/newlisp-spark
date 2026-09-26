@@ -35,7 +35,17 @@ This enhanced release overhauls the newLISP engine with a **Direct-Threaded Byte
   - **64 MB Gen 0 Nursery**: Ultra-fast bump-pointer allocation (`cell = gen0_ptr++`) eliminates pool searching and per-cell free overhead for short-lived intermediate objects.
   - **Cheney-Style Evacuation**: Live objects surviving nursery collections are promoted (`gcEvacuate`) to the tenured Gen 1 heap.
   - **Comprehensive Root Scanning**: Traverses symbol trees, context tables, runtime stacks (`envStack`, `resultStack`, `lambdaStack`), and active VM execution frames.
-  - **Safety first — nursery disabled by default in s1**: the tree-walking evaluator holds raw C-stack pointers into Gen 0 during expression evaluation; evacuating cells mid-evaluation can corrupt live expressions under heavy churn (reproduced with the `qa-factorfibo` prime sieve at N = 1,000,000 and `qa-bench`). By default all cells are allocated from the proven non-moving free-list allocator; set `NEWLISP_ENABLE_GEN0=1` to experiment with the nursery.
+  - **Safe-point collection — opt-in via `NEWLISP_ENABLE_GEN0=1`**: allocators never collect; past the arena capacity they fall back to the Gen 1 free list until a *top-level expression boundary* (`gen0MaybeCollect()` after each REPL/daemon command) collects, where the C stack provably holds no raw pointers into the nursery. Within one long-running expression the deterministic VM reclamation (below) keeps memory bounded on Gen 1. Two nursery-corrupting bugs were fixed on the way (`p_setf`/`updateCell` pushed arena cells onto the Gen 1 free list); one issue remains under the env var (a while-accumulator in `qa-vm-mem`), so the nursery stays opt-in.
+
+- **Deterministic VM Memory Reclamation (`nl-vm.c`)** — compiled code no longer leaks:
+  - **Ownership tracking**: a shadow map marks sole-owned VM temporaries (arithmetic results, argument copies) and reclaims them at every drop site — operand pops, slot overwrites, frame teardown, tail-call slot resets — with identity guards for argument-aliased values and zero-copy ownership transfer into symbols and return values.
+  - **Error unwinding**: `errorProc()`/`throw` longjmps used to leak every in-flight VM temporary and frame (50k caught errors leaked ~150k cells); catch sites now unwind the VM to their captured state.
+  - **Result**: loops that leaked ~2 cells/iteration (200M-iteration count-down grew RSS to ~6.5 GB) now run flat at ~510 cells; a 600-request HTTP-daemon soak stays flat at ~3.3 MB RSS; `qa-bench` improved from ratio 1.09 → 0.51. Guarded by `qa-vm-mem`/`qa-vm-edges` in `make testall`.
+
+- **Correctness fixes found by the reclamation work**:
+  - `takeEvalResult()`: mid-list boolean arguments (`(< a b)`) destroyed all parameter bindings of tree-walker lambdas (stale shared-singleton entry on the resultStack was popped as the argument-list head).
+  - `swap` was missing the `SYMBOL_DESTRUCTIVE` flag: compiled lambdas corrupted the shared constant table instead of mutating source literals — `qa-inplace` passes again (had been failing since v10.8).
+  - `p_address` keeps its argument cells alive for the enclosing expression (it returns the address of the argument cell's own storage).
 
 - **Native aarch64 / ARM64 Support (e.g. NVIDIA DGX Spark)**:
   - **Auto-detecting build**: plain `make` now detects aarch64 (`uname -m`) and selects the new `makefiles/dgx_spark_utf8_ffi.mk` (64-bit UTF-8 + libffi, tuned with `-mcpu=native` for the Grace CPU); x86_64 keeps its previous makefile. No manual makefile selection needed on ARM Linux.
