@@ -83,6 +83,7 @@ check:
 	./newlisp qa/qa-specific-tests/qa-message
 	./newlisp qa/qa-specific-tests/qa-bigint 10000
 	./newlisp qa/qa-specific-tests/qa-vm-mem
+	NEWLISP_ENABLE_GEN0=1 ./newlisp qa/qa-specific-tests/qa-vm-mem
 	./newlisp qa/qa-specific-tests/qa-vm-edges
 	./newlisp qa/qa-specific-tests/qa-bench
 
@@ -121,6 +122,7 @@ checkall:
 	./newlisp qa/qa-specific-tests/qa-longnum
 	./newlisp qa/qa-specific-tests/qa-factorfibo 60
 	./newlisp qa/qa-specific-tests/qa-vm-mem
+	NEWLISP_ENABLE_GEN0=1 ./newlisp qa/qa-specific-tests/qa-vm-mem
 	./newlisp qa/qa-specific-tests/qa-vm-edges
 	./newlisp qa/qa-specific-tests/qa-bench
 
