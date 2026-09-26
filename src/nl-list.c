@@ -1507,13 +1507,17 @@ if(val != nilCell)
     cell->aux = new->aux;
     cell->contents = new->contents;
 
-    /* free the cell  */
-    new->type = CELL_FREE;
-    new->aux = 0;
-    new->contents = 0;
-    new->next = firstFreeCell;
-    firstFreeCell = new;
-    --cellCount;
+    /* free the cell — gen0 nursery cells are reclaimed with the arena
+       and must never enter the gen1 free list */
+    if(!isInGen0(new))
+        {
+        new->type = CELL_FREE;
+        new->aux = 0;
+        new->contents = 0;
+        new->next = firstFreeCell;
+        firstFreeCell = new;
+        --cellCount;
+        }
     }
 
 itSymbol->contents = (UINT)nilCell;

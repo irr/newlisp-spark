@@ -557,12 +557,14 @@ extern CELL * xmlCallback;
 extern CELL * gen0_start;
 extern CELL * gen0_ptr;
 extern CELL * gen0_limit;
+extern CELL * gen0_boundary_limit;
 extern UINT gen0_collections;
 
 #define isInGen0(c) ((CELL*)(c) >= gen0_start && (CELL*)(c) < gen0_limit)
 
 void initGenerationalGC(void);
 void collectGen0(CELL ** extraRoot);
+void gen0MaybeCollect(void);
 CELL * allocGen1Cell(int type);
 CELL * allocGen1CellWithContents(int type, UINT contents);
 CELL * gcEvacuate(CELL * cell);
@@ -572,8 +574,11 @@ static inline CELL * stuffInteger(UINT contents)
     CELL * cell;
     if(__builtin_expect(gen0_ptr != NULL, 1))
     {
-        if(__builtin_expect(gen0_ptr >= gen0_limit, 0))
-            collectGen0(NULL);
+        /* past the arena capacity fall back to gen1; collection happens
+           only at top-level expression boundaries (gen0MaybeCollect()),
+           never here — callers may hold raw C pointers into the arena */
+        if(__builtin_expect(gen0_ptr >= gen0_boundary_limit, 0))
+            return(allocGen1CellWithContents(CELL_LONG, contents));
         cell = gen0_ptr++;
         cell->type = CELL_LONG;
         cell->next = nilCell;

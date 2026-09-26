@@ -1256,10 +1256,11 @@ if(cmdStream != NULL && batchMode)
             if(fgets(buff, MAX_COMMAND_LINE - 1, IOchannel) == NULL) break;
         if(memcmp(buff, "[/cmd]", 6) == 0 && batchMode == 2)
             {
-            if(logTraffic) 
+            if(logTraffic)
                 writeLog(cmdStream->buffer, 0);
             makeStreamFromString(&stream, cmdStream->buffer);
             evaluateStream(&stream, outDevice, 0);
+            gen0MaybeCollect(); /* top-level expression boundary */
             return;
             }
         writeStreamStr(cmdStream, buff, 0);
@@ -1279,6 +1280,10 @@ prettyPrintLength = 0;
 
 makeStreamFromString(&stream, command);
 evaluateStream(&stream, outDevice, 0);
+/* Top-level expression boundary: the C stack above holds no raw cell
+   pointers, every live cell is GC-rooted; safe to collect the nursery
+   when its arena has filled up. */
+gen0MaybeCollect();
 }
 
 char * processCommandEvent(char * command)
@@ -2041,25 +2046,42 @@ return(result);
 CELL * gen0_start = NULL;
 CELL * gen0_ptr = NULL;
 CELL * gen0_limit = NULL;
+/* The nursery is collected ONLY at top-level expression boundaries
+   (see gen0MaybeCollect()), never from an allocator: the tree walker
+   holds raw C pointers into the arena between expression boundaries,
+   and evacuating from inside an allocation would corrupt them (the
+   old qa-factorfibo failure).  Once the arena fills up, allocators
+   fall back to the gen1 free list until the next boundary collects. */
+CELL * gen0_boundary_limit = NULL;
 UINT gen0_collections = 0;
 
 void initGenerationalGC(void)
 {
-/* The gen0 copying nursery is disabled by default: collectGen0()
-   evacuates cells while the tree-walking evaluator still holds raw
-   pointers to them in C locals (in-flight expression trees in
-   evaluateExpression()/evaluateLambda()). Without C-stack scanning
-   those pointers go stale after the gen0 reset and live expressions
-   get corrupted (e.g. the qa-factorfibo sieve at N=1000000).
-   All cells are allocated from the gen1 free list instead, which is
-   the proven non-moving upstream allocator.
-   Set NEWLISP_ENABLE_GEN0=1 to experiment with the nursery. */
+/* The gen0 copying nursery is enabled with NEWLISP_ENABLE_GEN0=1.
+   Collection happens only at top-level expression boundaries
+   (gen0MaybeCollect(), called from executeCommandLine after a
+   command finishes); allocators never collect — past the arena
+   capacity they fall back to the gen1 free list until the next
+   boundary.  This makes evacuation safe: at a boundary the C stack
+   holds no raw pointers into the nursery, every live cell is tracked
+   by a GC root (symbol trees, envStack, resultStack, lambdaStack,
+   global registers, VM stack and frames). */
 if(getenv("NEWLISP_ENABLE_GEN0") && gen0_start == NULL)
     {
     gen0_start = (CELL *)allocMemory(GEN0_SIZE_CELLS * sizeof(CELL));
     gen0_ptr = gen0_start;
     gen0_limit = gen0_start + GEN0_SIZE_CELLS;
+    gen0_boundary_limit = getenv("NEWLISP_GEN0_NOALLOC")
+        ? gen0_start   /* debug: bumping disabled, cells come from gen1 */
+        : gen0_limit - GEN0_SIZE_CELLS / 4;
     }
+}
+
+/* Collect the nursery at a top-level expression boundary. */
+void gen0MaybeCollect(void)
+{
+if(gen0_ptr != NULL && gen0_ptr >= gen0_boundary_limit)
+    collectGen0(NULL);
 }
 
 CELL * allocGen1Cell(int type)
@@ -2316,8 +2338,12 @@ CELL * cell;
 
 if(gen0_ptr != NULL)
     {
-    if(__builtin_expect(gen0_ptr >= gen0_limit, 0))
-        collectGen0(NULL);
+    if(__builtin_expect(gen0_ptr >= gen0_boundary_limit, 0))
+        {
+        cell = allocGen1Cell(CELL_INT64);
+        *(INT64 *)&cell->aux = contents;
+        return(cell);
+        }
     cell = gen0_ptr++;
     cell->type = CELL_INT64;
     cell->next = nilCell;
@@ -2451,8 +2477,8 @@ CELL * cell;
 
 if(gen0_ptr != NULL)
     {
-    if(__builtin_expect(gen0_ptr >= gen0_limit, 0))
-        collectGen0(NULL);
+    if(__builtin_expect(gen0_ptr >= gen0_boundary_limit, 0))
+        return(allocGen1Cell(type));
     cell = gen0_ptr++;
     cell->type = type;
     cell->next = nilCell;
@@ -2471,12 +2497,8 @@ CELL * cell;
 
 if(gen0_ptr != NULL)
     {
-    if(__builtin_expect(gen0_ptr >= gen0_limit, 0))
-        {
-        CELL * root = (CELL *)contents;
-        collectGen0(&root);
-        contents = (UINT)root;
-        }
+    if(__builtin_expect(gen0_ptr >= gen0_boundary_limit, 0))
+        return(allocGen1CellWithContents(type, contents));
     cell = gen0_ptr++;
     cell->type = type;
     cell->next = nilCell;
@@ -2495,8 +2517,13 @@ CELL * cell;
 
 if(gen0_ptr != NULL)
     {
-    if(__builtin_expect(gen0_ptr >= gen0_limit, 0))
-        collectGen0(NULL);
+    if(__builtin_expect(gen0_ptr >= gen0_boundary_limit, 0))
+        {
+        cell = allocGen1Cell(CELL_STRING);
+        cell->aux = (UINT)size + 1;
+        cell->contents = (UINT)contents;
+        return(cell);
+        }
     cell = gen0_ptr++;
     cell->type = CELL_STRING;
     cell->next = nilCell;
@@ -2530,12 +2557,8 @@ CELL * list;
 UINT len;
 #endif
 
-if(gen0_ptr != NULL)
-    {
-    if(__builtin_expect(gen0_ptr >= gen0_limit, 0))
-        collectGen0(&cell);
+if(gen0_ptr != NULL && __builtin_expect(gen0_ptr < gen0_boundary_limit, 1))
     newCell = gen0_ptr++;
-    }
 else
     {
     if(firstFreeCell == NULL) allocBlock();
@@ -5492,18 +5515,23 @@ else if(cell->type == CELL_STRING || cell->type == CELL_DYN_SYMBOL
     freeMemory( (void *)cell->contents);
     
     
-/* get new contents */  
+/* get new contents */
 cell->type = new->type;
 cell->aux = new->aux;
 cell->contents = new->contents;
 
-/* free cell */
-new->type = CELL_FREE;
-new->aux = 0;
-new->contents = 0;
-new->next = firstFreeCell;
-firstFreeCell = new;
---cellCount;
+/* free cell — unless it lives in the gen0 nursery: nursery cells are
+   reclaimed with the arena and must never enter the gen1 free list
+   (the arena bump allocator would hand the same cell out twice) */
+if(!isInGen0(new))
+    {
+    new->type = CELL_FREE;
+    new->aux = 0;
+    new->contents = 0;
+    new->next = firstFreeCell;
+    firstFreeCell = new;
+    --cellCount;
+    }
 
 if(params != nilCell) goto SETF_BEGIN;
 
